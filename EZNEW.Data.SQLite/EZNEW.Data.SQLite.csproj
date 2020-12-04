@@ -4,6 +4,12 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>eznew.snk</AssemblyOriginatorKeyFile>
+    <Authors>DingBin.Li</Authors>
+    <Company>EZNEW</Company>
+    <Copyright>Copyright © DingBin.Li</Copyright>
+    <PackageProjectUrl>https://github.com/eznew-net/EZNEW.Data.SQLite</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/eznew-net/EZNEW.Data.SQLite</RepositoryUrl>
+    <PackageTags>.NET,EZNEW,SQLite</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
