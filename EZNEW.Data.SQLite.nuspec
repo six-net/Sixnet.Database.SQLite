@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>EZNEW.Data.SQLite</id>
+    <version>$version$</version>
+    <title></title>
+    <authors>DingBin.Li</authors>
+    <owners>EZNEW</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <licenseUrl>https://github.com/eznew-net/EZNEW.Data.SQLite/blob/master/LICENSE</licenseUrl>
+    <projectUrl>https://github.com/eznew-net/EZNEW.Data.SQLite</projectUrl>
+    <iconUrl>http://www.eznew.net/nugetico.png</iconUrl>
+    <description>Provides access to SQLite databases based on the EZNEW development framework</description>
+    <copyright>Copyright © DingBin.Li</copyright>
+    <tags>.NET,EZNEW,SQLite</tags>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="EZNEW" version="3.1.0" />
+        <dependency id="Microsoft.EntityFrameworkCore.Relational" version="2.2.0" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="EZNEW.Data.SQLite\bin\$configuration$\netstandard2.0\EZNEW.Data.SQLite.dll" target="lib\netstandard2.0" />
+	<file src="EZNEW.Data.SQLite\bin\$configuration$\netstandard2.0\EZNEW.Data.SQLite.pdb" target="lib\netstandard2.0" />
+  </files>
+</package>
