@@ -1,22 +1,22 @@
-﻿using EZNEW.Dapper;
-using EZNEW.Data.CriteriaConverter;
-using EZNEW.Develop.Command;
-using EZNEW.Develop.Command.Modify;
-using EZNEW.Develop.CQuery;
-using EZNEW.Develop.CQuery.CriteriaConverter;
-using EZNEW.Develop.CQuery.Translator;
-using EZNEW.Develop.DataAccess;
-using EZNEW.Develop.Entity;
-using EZNEW.Diagnostics;
-using EZNEW.Fault;
-using EZNEW.Logging;
-using EZNEW.Serialize;
-using Microsoft.Data.Sqlite;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Text;
+using Microsoft.Data.Sqlite;
+using EZNEW.Dapper;
+using EZNEW.Data.CriteriaConverter;
+using EZNEW.Development.Command;
+using EZNEW.Development.Command.Modification;
+using EZNEW.Development.Query;
+using EZNEW.Development.Query.CriteriaConverter;
+using EZNEW.Development.Query.Translator;
+using EZNEW.Development.DataAccess;
+using EZNEW.Development.Entity;
+using EZNEW.Diagnostics;
+using EZNEW.Exceptions;
+using EZNEW.Logging;
+using EZNEW.Serialization;
 
 namespace EZNEW.Data.SQLite
 {
@@ -25,6 +25,8 @@ namespace EZNEW.Data.SQLite
     /// </summary>
     internal static class SQLiteFactory
     {
+        #region Fields
+
         /// <summary>
         /// Field format key
         /// </summary>
@@ -53,43 +55,27 @@ namespace EZNEW.Data.SQLite
         /// <summary>
         /// Calculate operators
         /// </summary>
-        static readonly Dictionary<CalculateOperator, string> CalculateOperators = new Dictionary<CalculateOperator, string>(4)
+        static readonly Dictionary<CalculationOperator, string> CalculateOperators = new Dictionary<CalculationOperator, string>(4)
         {
-            [CalculateOperator.Add] = "+",
-            [CalculateOperator.Subtract] = "-",
-            [CalculateOperator.Multiply] = "*",
-            [CalculateOperator.Divide] = "/",
+            [CalculationOperator.Add] = "+",
+            [CalculationOperator.Subtract] = "-",
+            [CalculationOperator.Multiply] = "*",
+            [CalculationOperator.Divide] = "/",
         };
 
         /// <summary>
         /// Aggregate functions
         /// </summary>
-        static readonly Dictionary<OperateType, string> AggregateFunctions = new Dictionary<OperateType, string>(5)
+        static readonly Dictionary<CommandOperationType, string> AggregateFunctions = new Dictionary<CommandOperationType, string>(5)
         {
-            [OperateType.Max] = "MAX",
-            [OperateType.Min] = "MIN",
-            [OperateType.Sum] = "SUM",
-            [OperateType.Avg] = "AVG",
-            [OperateType.Count] = "COUNT",
+            [CommandOperationType.Max] = "MAX",
+            [CommandOperationType.Min] = "MIN",
+            [CommandOperationType.Sum] = "SUM",
+            [CommandOperationType.Avg] = "AVG",
+            [CommandOperationType.Count] = "COUNT",
         };
 
-        /// <summary>
-        /// Enable trace log
-        /// </summary>
-        static bool EnableTraceLog = false;
-
-        /// <summary>
-        /// Trace log split
-        /// </summary>
-        static readonly string TraceLogSplit = $"{new string('=', 10)} Database Command Translation Result {new string('=', 10)}";
-
-        static SQLiteFactory()
-        {
-            EnableTraceLog = SwitchManager.ShouldTraceFramework(sw =>
-            {
-                EnableTraceLog = SwitchManager.ShouldTraceFramework();
-            });
-        }
+        #endregion
 
         #region Get database connection
 
@@ -167,44 +153,25 @@ namespace EZNEW.Data.SQLite
 
         #endregion
 
-        #region Command translation result log
+        #region Framework log
 
         /// <summary>
         /// Log execute command
         /// </summary>
-        /// <param name="executeCommand">Execte command</param>
-        internal static void LogExecuteCommand(DatabaseExecuteCommand executeCommand)
+        /// <param name="command">Execte command</param>
+        internal static void LogExecutionCommand(DatabaseExecutionCommand command)
         {
-            if (EnableTraceLog)
-            {
-                LogScriptCore(executeCommand.CommandText, JsonSerializeHelper.ObjectToJson(executeCommand.Parameters));
-            }
+            FrameworkLogManager.LogDatabaseExecutionCommand(DatabaseServerType.SQLite, command);
         }
 
         /// <summary>
         /// Log script
         /// </summary>
         /// <param name="script">Script</param>
-        /// <param name="parameters">Parameters</param>
-        internal static void LogScript(string script, object parameters)
+        /// <param name="parameter">Parameter</param>
+        internal static void LogScript(string script, object parameter)
         {
-            if (EnableTraceLog)
-            {
-                LogScriptCore(script, JsonSerializeHelper.ObjectToJson(parameters));
-            }
-        }
-
-        /// <summary>
-        /// Log script
-        /// </summary>
-        /// <param name="script">Script</param>
-        /// <param name="parameters">Parameters</param>
-        static void LogScriptCore(string script, string parameters)
-        {
-            LogManager.LogInformation<SQLiteEngine>(TraceLogSplit +
-            $"{Environment.NewLine}{Environment.NewLine}{script}" +
-            $"{Environment.NewLine}{Environment.NewLine}{parameters}" +
-            $"{Environment.NewLine}{Environment.NewLine}");
+            FrameworkLogManager.LogDatabaseScript(DatabaseServerType.SQLite, script, parameter);
         }
 
         #endregion
@@ -216,7 +183,7 @@ namespace EZNEW.Data.SQLite
         /// </summary>
         /// <param name="command">Command</param>
         /// <returns>Return command type</returns>
-        public static CommandType GetCommandType(RdbCommand command)
+        public static CommandType GetCommandType(DefaultCommand command)
         {
             return command.CommandType == CommandTextType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
         }
@@ -230,7 +197,7 @@ namespace EZNEW.Data.SQLite
         /// </summary>
         /// <param name="calculate">Calculate operator</param>
         /// <returns></returns>
-        public static string GetCalculateChar(CalculateOperator calculate)
+        public static string GetCalculateChar(CalculationOperator calculate)
         {
             CalculateOperators.TryGetValue(calculate, out var opearterChar);
             return opearterChar;
@@ -245,7 +212,7 @@ namespace EZNEW.Data.SQLite
         /// </summary>
         /// <param name="funcType">Function type</param>
         /// <returns></returns>
-        public static string GetAggregateFunctionName(OperateType funcType)
+        public static string GetAggregateFunctionName(CommandOperationType funcType)
         {
             AggregateFunctions.TryGetValue(funcType, out var funcName);
             return funcName;
@@ -260,9 +227,9 @@ namespace EZNEW.Data.SQLite
         /// </summary>
         /// <param name="operateType">Operate type</param>
         /// <returns></returns>
-        public static bool AggregateOperateMustNeedField(OperateType operateType)
+        public static bool AggregateOperateMustNeedField(CommandOperationType operateType)
         {
-            return operateType != OperateType.Count;
+            return operateType != CommandOperationType.Count;
         }
 
         #endregion
@@ -465,7 +432,7 @@ namespace EZNEW.Data.SQLite
             {
                 commandParameters.Add(objectParametersDict);
             }
-            else if (originalParameters is IEnumerable<KeyValuePair<string, IModifyValue>> modifyParametersDict)
+            else if (originalParameters is IEnumerable<KeyValuePair<string, IModificationValue>> modifyParametersDict)
             {
                 commandParameters.Add(modifyParametersDict);
             }
@@ -495,7 +462,7 @@ namespace EZNEW.Data.SQLite
             DynamicParameters dynamicParameters = new DynamicParameters();
             foreach (var item in commandParameters.Parameters)
             {
-                var parameter = item.Value;
+                var parameter = DataManager.HandleParameter(DatabaseServerType.SQLite, item.Value);
                 dynamicParameters.Add(parameter.Name, parameter.Value
                                     , parameter.DbType, parameter.ParameterDirection
                                     , parameter.Size, parameter.Precision
@@ -561,7 +528,7 @@ namespace EZNEW.Data.SQLite
         /// <param name="connection">Database connection</param>
         /// <param name="executeOption">Execute option</param>
         /// <returns></returns>
-        public static IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecuteOptions executeOption)
+        public static IDbTransaction GetExecuteTransaction(IDbConnection connection, CommandExecutionOptions executeOption)
         {
             DataIsolationLevel? dataIsolationLevel = executeOption?.IsolationLevel;
             if (!dataIsolationLevel.HasValue)

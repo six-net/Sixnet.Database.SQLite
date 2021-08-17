@@ -15,7 +15,7 @@
     <tags>.NET,EZNEW,SQLite</tags>
     <dependencies>
       <group targetFramework=".NETStandard2.0">
-        <dependency id="EZNEW" version="3.1.3" />
+        <dependency id="EZNEW" version="4.0.0" />
         <dependency id="Microsoft.Data.Sqlite" version="5.0.0" />
       </group>
     </dependencies>
