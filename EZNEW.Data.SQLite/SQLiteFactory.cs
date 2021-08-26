@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
-using System.Text;
 using Microsoft.Data.Sqlite;
-using EZNEW.Dapper;
 using EZNEW.Data.CriteriaConverter;
 using EZNEW.Development.Command;
 using EZNEW.Development.Command.Modification;
@@ -13,10 +11,9 @@ using EZNEW.Development.Query.CriteriaConverter;
 using EZNEW.Development.Query.Translator;
 using EZNEW.Development.DataAccess;
 using EZNEW.Development.Entity;
-using EZNEW.Diagnostics;
 using EZNEW.Exceptions;
 using EZNEW.Logging;
-using EZNEW.Serialization;
+using Dapper;
 
 namespace EZNEW.Data.SQLite
 {

@@ -4,7 +4,6 @@ using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using EZNEW.Dapper;
 using EZNEW.Data.Configuration;
 using EZNEW.Development.Command;
 using EZNEW.Development.Command.Modification;
@@ -13,6 +12,7 @@ using EZNEW.Development.Query.Translator;
 using EZNEW.Development.Entity;
 using EZNEW.Exceptions;
 using Microsoft.Data.Sqlite;
+using Dapper;
 
 namespace EZNEW.Data.SQLite
 {
@@ -60,7 +60,7 @@ namespace EZNEW.Data.SQLite
 
             IQueryTranslator translator = SQLiteFactory.GetQueryTranslator(server);
             List<DatabaseExecutionCommand> executeCommands = new List<DatabaseExecutionCommand>();
-            var batchExecuteConfig = DataManager.GetBatchExecuteConfiguration(server.ServerType) ?? BatchExecuteConfiguration.Default;
+            var batchExecuteConfig = DataManager.GetBatchExecutionConfiguration(server.ServerType) ?? BatchExecutionConfiguration.Default;
             var groupStatementsCount = batchExecuteConfig.GroupStatementsCount;
             groupStatementsCount = groupStatementsCount < 0 ? 1 : groupStatementsCount;
             var groupParameterCount = batchExecuteConfig.GroupParametersCount;
@@ -560,7 +560,7 @@ namespace EZNEW.Data.SQLite
                     string innerFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
                     string outputFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
                     string queryScript = $"SELECT {innerFormatedField} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
-                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {SQLiteFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{SQLiteFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({SQLiteFactory.WrapKeyword(defaultFieldName)}) FROM {SQLiteFactory.PagingTableName}) AS QueryDataTotalCount,{outputFormatedField} FROM {SQLiteFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.{SQLiteFactory.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.OrderString}")} {limitString}";
+                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {SQLiteFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{SQLiteFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({SQLiteFactory.WrapKeyword(defaultFieldName)}) FROM {SQLiteFactory.PagingTableName}) AS {DataManager.PagingTotalCountFieldName},{outputFormatedField} FROM {SQLiteFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.{SQLiteFactory.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.OrderString}")} {limitString}";
                     break;
             }
 
