@@ -321,7 +321,23 @@ namespace EZNEW.Data.SQLite
                 }
                 updateSetArray.Add($"{SQLiteFactory.WrapKeyword(field.FieldName)}={newValueExpression}");
             }
-            string cmdText = $"{preScript}UPDATE {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} SET {string.Join(",", updateSetArray)} {conditionString};";
+            string cmdText = string.Empty;
+            string wrapObjectName = SQLiteFactory.WrapKeyword(objectName);
+            if (string.IsNullOrWhiteSpace(joinScript))
+            {
+                cmdText = $"{preScript}UPDATE {wrapObjectName} AS {translator.ObjectPetName} SET {string.Join(",", updateSetArray)} {conditionString};";
+            }
+            else 
+            {
+                var primaryKeyFields = DataManager.GetFields(DatabaseServerType.SQLite, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
+                if (primaryKeyFields.IsNullOrEmpty())
+                {
+                    throw new EZNEWException($"{command.EntityType?.FullName} not set primary key");
+                }
+                string updateTableShortName = "UTB";
+
+                cmdText = $"{preScript}UPDATE {wrapObjectName} AS {updateTableShortName} SET {string.Join(",", updateSetArray)} WHERE {string.Join("||", primaryKeyFields.Select(pk => updateTableShortName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
+            }
             translator.ParameterSequence = parameterSequence;
 
             #endregion
@@ -367,7 +383,22 @@ namespace EZNEW.Data.SQLite
             #region script
 
             string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}DELETE FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString};";
+            string cmdText = string.Empty;
+            string wrapObjectName = SQLiteFactory.WrapKeyword(objectName);
+            if (string.IsNullOrWhiteSpace(joinScript))
+            {
+                cmdText = $"{preScript}DELETE FROM {wrapObjectName} AS {translator.ObjectPetName} {conditionString};";
+            }
+            else
+            {
+                var primaryKeyFields = DataManager.GetFields(DatabaseServerType.SQLite, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
+                if (primaryKeyFields.IsNullOrEmpty())
+                {
+                    throw new EZNEWException($"{command.EntityType?.FullName} not set primary key");
+                }
+                string deleteTableShortName = "DTB";
+                cmdText = $"{preScript}DELETE FROM {wrapObjectName} AS {deleteTableShortName} WHERE {string.Join("||", primaryKeyFields.Select(pk => deleteTableShortName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
+            }
 
             #endregion
 
