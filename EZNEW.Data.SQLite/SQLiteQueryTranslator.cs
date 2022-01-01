@@ -4,15 +4,15 @@ using System.Linq;
 using System.Text;
 using EZNEW.Development.Command;
 using EZNEW.Development.Query;
-using EZNEW.Development.Query.CriteriaConverter;
-using EZNEW.Development.Query.Translator;
+using EZNEW.Development.Query.Translation;
 using EZNEW.Development.Entity;
 using EZNEW.Exceptions;
+using EZNEW.Data.Conversion;
 
 namespace EZNEW.Data.SQLite
 {
     /// <summary>
-    /// Query translator implement for the SQLite
+    /// Query translator implementation for the SQLite
     /// </summary>
     public class SQLiteQueryTranslator : IQueryTranslator
     {
@@ -32,7 +32,7 @@ namespace EZNEW.Data.SQLite
         const string NotNullOperator = "IS NOT NULL";
         const string DescKeyWord = "DESC";
         const string AscKeyWord = "ASC";
-        public const string ObjPetName = "TB";
+        public const string DefaultObjectPetName = "TB";
         const string TreeTableName = "RecurveTable";
         const string TreeTablePetName = "RTT";
         static readonly Dictionary<JoinType, string> joinOperatorDict = new Dictionary<JoinType, string>()
@@ -53,32 +53,41 @@ namespace EZNEW.Data.SQLite
         /// <summary>
         /// Gets or sets the query object pet name
         /// </summary>
-        public string ObjectPetName
-        {
-            get
-            {
-                return ObjPetName;
-            }
-        }
+        public string ObjectPetName => DefaultObjectPetName;
 
         /// <summary>
         /// Gets or sets the parameter sequence
         /// </summary>
         public int ParameterSequence { get; set; } = 0;
 
+        /// <summary>
+        /// Gets or sets the data access context
+        /// </summary>
+        public DataAccessContext DataAccessContext { get; set; }
+
+        /// <summary>
+        /// Gets the database server
+        /// </summary>
+        DatabaseServer DatabaseServer => DataAccessContext.Server;
+
+        /// <summary>
+        /// Gets the database server type
+        /// </summary>
+        DatabaseServerType DatabaseServerType => SQLiteManager.CurrentDatabaseServerType;
+
         #endregion
 
         #region Functions
 
         /// <summary>
-        /// Translate Query Object
+        /// Translate query object
         /// </summary>
-        /// <param name="query">query object</param>
-        /// <returns>translate result</returns>
-        public TranslateResult Translate(IQuery query)
+        /// <param name="query">Query object</param>
+        /// <returns>Return a translation result</returns>
+        public QueryTranslationResult Translate(IQuery query)
         {
             Init();
-            var result = ExecuteTranslate(query);
+            var result = ExecuteTranslation(query, QueryLocation.Top);
             if (!result.WithScripts.IsNullOrEmpty())
             {
                 result.PreScript = FormatWithScript(result.WithScripts);
@@ -91,43 +100,45 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// Execute Translate
+        /// Execute translation
         /// </summary>
-        /// <param name="query">query object</param>
-        /// <param name="paras">parameters</param>
-        /// <param name="objectName">query object name</param>
-        /// <returns></returns>
-        public TranslateResult ExecuteTranslate(IQuery query, CommandParameters paras = null, string objectName = "", bool subQuery = false, bool useOrder = true)
+        /// <param name="query">Query object</param>
+        /// <param name="location">Query location</param>
+        /// <param name="parameters">Parameters</param>
+        /// <param name="objectName">Entity object name</param>
+        /// <param name="useSort">Indicates whether use sort</param>
+        /// <returns>Return a translation result</returns>
+        public QueryTranslationResult ExecuteTranslation(IQuery query, QueryLocation location, CommandParameters parameters = null, string objectName = "", bool useSort = true)
         {
             if (query == null)
             {
-                return TranslateResult.Empty;
+                return QueryTranslationResult.Empty;
             }
             StringBuilder conditionBuilder = new StringBuilder();
-            if (query.QueryType == QueryCommandType.QueryObject)
+            if (query.ExecutionMode == QueryExecutionMode.QueryObject)
             {
                 StringBuilder orderBuilder = new StringBuilder();
-                CommandParameters parameters = paras ?? new CommandParameters();
-                objectName = string.IsNullOrWhiteSpace(objectName) ? ObjPetName : objectName;
+                parameters = parameters ?? new CommandParameters();
+                objectName = string.IsNullOrWhiteSpace(objectName) ? DefaultObjectPetName : objectName;
                 List<string> withScripts = new List<string>();
                 string recurveTableName = string.Empty;
                 string recurveTablePetName = string.Empty;
 
-                #region query condition
+                #region condition
 
-                if (!query.Criterias.IsNullOrEmpty())
+                if (!query.Conditions.IsNullOrEmpty())
                 {
                     int index = 0;
-                    foreach (var queryItem in query.Criterias)
+                    foreach (var condition in query.Conditions)
                     {
-                        var queryItemCondition = TranslateCondition(query, queryItem, parameters, objectName);
-                        if (!queryItemCondition.WithScripts.IsNullOrEmpty())
+                        var conditionResult = TranslateCondition(query, condition, parameters, objectName);
+                        if (!conditionResult.WithScripts.IsNullOrEmpty())
                         {
-                            withScripts.AddRange(queryItemCondition.WithScripts);
-                            recurveTableName = queryItemCondition.RecurveObjectName;
-                            recurveTablePetName = queryItemCondition.RecurvePetName;
+                            withScripts.AddRange(conditionResult.WithScripts);
+                            recurveTableName = conditionResult.RecurveObjectName;
+                            recurveTablePetName = conditionResult.RecurvePetName;
                         }
-                        conditionBuilder.Append($" {(index > 0 ? queryItem.Item1.ToString() : string.Empty)} {queryItemCondition.ConditionString}");
+                        conditionBuilder.Append($" {(index > 0 ? condition.ConnectionOperator.ToString() : string.Empty)} {conditionResult.ConditionString}");
                         index++;
                     }
                 }
@@ -136,11 +147,11 @@ namespace EZNEW.Data.SQLite
 
                 #region sort
 
-                if (useOrder && !query.Orders.IsNullOrEmpty())
+                if (useSort && !query.Sorts.IsNullOrEmpty())
                 {
-                    foreach (var orderItem in query.Orders)
+                    foreach (var sortEntry in query.Sorts)
                     {
-                        orderBuilder.Append($"{ConvertOrderCriteriaName(query, objectName, orderItem)} {(orderItem.Desc ? DescKeyWord : AscKeyWord)},");
+                        orderBuilder.Append($"{ConvertSortFieldName(query, objectName, sortEntry)} {(sortEntry.Desc ? DescKeyWord : AscKeyWord)},");
                     }
                 }
 
@@ -149,19 +160,19 @@ namespace EZNEW.Data.SQLite
                 #region combine
 
                 StringBuilder combineBuilder = new StringBuilder();
-                if (!query.CombineItems.IsNullOrEmpty())
+                if (!query.Combines.IsNullOrEmpty())
                 {
-                    foreach (var combine in query.CombineItems)
+                    foreach (var combineEntry in query.Combines)
                     {
-                        if (combine?.CombineQuery == null)
+                        if (combineEntry?.Query == null)
                         {
                             continue;
                         }
                         var combineObjectPetName = GetNewSubObjectPetName();
-                        string combineObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.SQLite, combine.CombineQuery);
-                        var combineQueryResult = ExecuteTranslate(combine.CombineQuery, parameters, combineObjectPetName, true, true);
+                        string combineObjectName = DataAccessContext.GetCombineEntityObjectName(combineEntry.Query);
+                        var combineQueryResult = ExecuteTranslation(combineEntry.Query, QueryLocation.Combine, parameters, combineObjectPetName, true);
                         string combineConditionString = string.IsNullOrWhiteSpace(combineQueryResult.ConditionString) ? string.Empty : $"WHERE {combineQueryResult.ConditionString}";
-                        combineBuilder.Append($" {GetCombineOperator(combine.CombineType)} SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(combineObjectPetName, query, query.GetEntityType(), true, false))} FROM {SQLiteFactory.WrapKeyword(combineObjectName)} AS {combineObjectPetName} {(combineQueryResult.AllowJoin ? combineQueryResult.JoinScript : string.Empty)} {combineConditionString}");
+                        combineBuilder.Append($" {GetCombineOperator(combineEntry.Type)} SELECT {string.Join(",", SQLiteManager.FormatQueryFields(combineObjectPetName, query, query.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(combineObjectName)} AS {combineObjectPetName} {(combineQueryResult.AllowJoin ? combineQueryResult.JoinScript : string.Empty)} {combineConditionString}");
                         if (!combineQueryResult.WithScripts.IsNullOrEmpty())
                         {
                             withScripts.AddRange(combineQueryResult.WithScripts);
@@ -178,26 +189,26 @@ namespace EZNEW.Data.SQLite
                 bool allowJoin = true;
                 StringBuilder joinBuilder = new StringBuilder();
                 StringBuilder joinExtraCondition = new StringBuilder();
-                if (!query.JoinItems.IsNullOrEmpty())
+                if (!query.Joins.IsNullOrEmpty())
                 {
-                    foreach (var joinItem in query.JoinItems)
+                    foreach (var joinEntry in query.Joins)
                     {
-                        if (joinItem == null || joinItem.JoinQuery == null)
+                        if (joinEntry == null || joinEntry.JoinQuery == null)
                         {
                             continue;
                         }
-                        if (joinItem.JoinQuery.GetEntityType() == null)
+                        if (joinEntry.JoinQuery.GetEntityType() == null)
                         {
                             throw new EZNEWException("IQuery object must set entity type if use in join operation");
                         }
-                        string joinObjName = GetNewSubObjectPetName();
-                        var joinQueryResult = ExecuteTranslate(joinItem.JoinQuery, parameters, joinObjName, true, true);
+                        string joinObjectPetName = GetNewSubObjectPetName();
+                        var joinQueryResult = ExecuteTranslation(joinEntry.JoinQuery, QueryLocation.Join, parameters, joinObjectPetName, true);
                         if (string.IsNullOrWhiteSpace(joinQueryResult.CombineScript))
                         {
-                            var joinConnection = GetJoinCondition(query, joinItem, objectName, joinObjName);
+                            var joinConnection = GetJoinCondition(query, joinEntry, objectName, joinObjectPetName);
                             if (!string.IsNullOrWhiteSpace(joinQueryResult.ConditionString))
                             {
-                                if (joinQueryResult.AllowJoin && PositionJoinConditionToConnection(joinItem.JoinType))
+                                if (joinQueryResult.AllowJoin && PositionJoinConditionToConnection(joinEntry.JoinType))
                                 {
                                     joinConnection += $"{(string.IsNullOrWhiteSpace(joinConnection) ? " ON" : " AND ")}{joinQueryResult.ConditionString}";
                                 }
@@ -210,10 +221,10 @@ namespace EZNEW.Data.SQLite
                             {
                                 conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND ")}{joinQueryResult.JoinExtraConditionString}");
                             }
-                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} {SQLiteFactory.WrapKeyword(DataManager.GetQueryRelationObjectName(DatabaseServerType.SQLite, joinItem.JoinQuery))} AS {joinObjName}{joinConnection}");
-                            if (joinItem.ExtraQuery != null)
+                            joinBuilder.Append($" {GetJoinOperator(joinEntry.JoinType)} {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinQuery))} AS {joinObjectPetName}{joinConnection}");
+                            if (joinEntry.ExtraQuery != null)
                             {
-                                var extraQueryResult = ExecuteTranslate(joinItem.ExtraQuery, parameters, joinObjName, true, true);
+                                var extraQueryResult = ExecuteTranslation(joinEntry.ExtraQuery, QueryLocation.Join, parameters, joinObjectPetName, true);
                                 if (!string.IsNullOrWhiteSpace(extraQueryResult.ConditionString))
                                 {
                                     joinExtraCondition.Append(joinExtraCondition.Length > 0 ? $" AND {extraQueryResult.ConditionString}" : extraQueryResult.ConditionString);
@@ -227,8 +238,8 @@ namespace EZNEW.Data.SQLite
                         else
                         {
                             var combineJoinObjName = GetNewSubObjectPetName();
-                            var joinConnection = GetJoinCondition(query, joinItem, objectName, combineJoinObjName);
-                            joinBuilder.Append($" {GetJoinOperator(joinItem.JoinType)} (SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(joinObjName, joinItem.JoinQuery, joinItem.JoinQuery.GetEntityType(), false, false))} FROM {SQLiteFactory.WrapKeyword(DataManager.GetQueryRelationObjectName(DatabaseServerType.SQLite, joinItem.JoinQuery))} AS {joinObjName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
+                            var joinConnection = GetJoinCondition(query, joinEntry, objectName, combineJoinObjName);
+                            joinBuilder.Append($" {GetJoinOperator(joinEntry.JoinType)} (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(joinObjectPetName, joinEntry.JoinQuery, joinEntry.JoinQuery.GetEntityType(), false, false))} FROM {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinQuery))} AS {joinObjectPetName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
                         }
                         if (!joinQueryResult.WithScripts.IsNullOrEmpty())
                         {
@@ -246,7 +257,7 @@ namespace EZNEW.Data.SQLite
 
                 string conditionString = conditionBuilder.ToString();
                 string joinExtraConditionString = joinExtraCondition.ToString();
-                if (query.RecurveCriteria != null)
+                if (query.Recurve != null)
                 {
                     allowJoin = false;
                     string nowConditionString = conditionString;
@@ -255,20 +266,21 @@ namespace EZNEW.Data.SQLite
                         nowConditionString = string.IsNullOrWhiteSpace(nowConditionString) ? joinExtraConditionString : $"{nowConditionString} AND {joinExtraConditionString}";
                         joinExtraConditionString = string.Empty;
                     }
-                    EntityField recurveField = DataManager.GetField(DatabaseServerType.SQLite, query, query.RecurveCriteria.Key);
-                    EntityField recurveRelationField = DataManager.GetField(DatabaseServerType.SQLite, query, query.RecurveCriteria.RelationKey);
+                    EntityField recurveField = DataManager.GetField(DatabaseServerType, query, query.Recurve.DataField);
+                    EntityField recurveRelationField = DataManager.GetField(DatabaseServerType, query, query.Recurve.RelationField);
                     var recurveTable = GetNewRecurveTableName();
                     recurveTablePetName = recurveTable.Item1;
                     recurveTableName = recurveTable.Item2;
-                    conditionString = $"{objectName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)} IN (SELECT {recurveTablePetName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)} FROM {SQLiteFactory.WrapKeyword(recurveTableName)} AS {recurveTablePetName})";
-                    string queryObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.SQLite, query);
+                    conditionString = $"{objectName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)} IN (SELECT {recurveTablePetName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)} FROM {SQLiteManager.WrapKeyword(recurveTableName)} AS {recurveTablePetName})";
+                    DataAccessContext.SetActivityQuery(query, location);
+                    string queryObjectName = DataManager.GetEntityObjectName(DataAccessContext);
                     string withScript =
-                    $"{recurveTableName} AS (SELECT {objectName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)},{objectName}.{SQLiteFactory.WrapKeyword(recurveRelationField.FieldName)} FROM {SQLiteFactory.WrapKeyword(queryObjectName)} AS {objectName} {joinScript} {(string.IsNullOrWhiteSpace(nowConditionString) ? string.Empty : $"WHERE {nowConditionString}")} " +
-                    $"UNION ALL SELECT {objectName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)},{objectName}.{SQLiteFactory.WrapKeyword(recurveRelationField.FieldName)} FROM {SQLiteFactory.WrapKeyword(queryObjectName)} AS {objectName} JOIN {recurveTableName} AS {recurveTablePetName} " +
-                    $"ON {(query.RecurveCriteria.Direction == RecurveDirection.Up ? $"{objectName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)}={recurveTablePetName}.{SQLiteFactory.WrapKeyword(recurveRelationField.FieldName)}" : $"{objectName}.{SQLiteFactory.WrapKeyword(recurveRelationField.FieldName)}={recurveTablePetName}.{SQLiteFactory.WrapKeyword(recurveField.FieldName)}")})";
+                    $"{recurveTableName} AS (SELECT {objectName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)},{objectName}.{SQLiteManager.WrapKeyword(recurveRelationField.FieldName)} FROM {SQLiteManager.WrapKeyword(queryObjectName)} AS {objectName} {joinScript} {(string.IsNullOrWhiteSpace(nowConditionString) ? string.Empty : $"WHERE {nowConditionString}")} " +
+                    $"UNION ALL SELECT {objectName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)},{objectName}.{SQLiteManager.WrapKeyword(recurveRelationField.FieldName)} FROM {SQLiteManager.WrapKeyword(queryObjectName)} AS {objectName} JOIN {recurveTableName} AS {recurveTablePetName} " +
+                    $"ON {(query.Recurve.Direction == RecurveDirection.Up ? $"{objectName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)}={recurveTablePetName}.{SQLiteManager.WrapKeyword(recurveRelationField.FieldName)}" : $"{objectName}.{SQLiteManager.WrapKeyword(recurveRelationField.FieldName)}={recurveTablePetName}.{SQLiteManager.WrapKeyword(recurveField.FieldName)}")})";
                     withScripts.Add(withScript);
                 }
-                var result = TranslateResult.CreateNewResult(conditionString, orderBuilder.ToString().Trim(','), parameters);
+                var result = QueryTranslationResult.Create(conditionString, orderBuilder.ToString().Trim(','), parameters);
                 result.JoinScript = joinScript;
                 result.AllowJoin = allowJoin;
                 result.WithScripts = withScripts;
@@ -283,47 +295,48 @@ namespace EZNEW.Data.SQLite
             }
             else
             {
-                conditionBuilder.Append(query.QueryText);
-                return TranslateResult.CreateNewResult(conditionBuilder.ToString(), string.Empty, query.QueryTextParameters);
+                conditionBuilder.Append(query.Text);
+                return QueryTranslationResult.Create(conditionBuilder.ToString(), string.Empty, query.TextParameters);
             }
         }
 
         /// <summary>
-        /// translate query condition
+        /// Translate condition
         /// </summary>
-        /// <param name="queryItem">query condition</param>
+        /// <param name="sourceQuery">Source query</param>
+        /// <param name="condition">Condition</param>
+        /// <param name="parameters">Parameters</param>
+        /// <param name="objectName">Object name</param>
         /// <returns></returns>
-        TranslateResult TranslateCondition(IQuery query, Tuple<QueryOperator, IQueryItem> queryItem, CommandParameters parameters, string objectName)
+        QueryTranslationResult TranslateCondition(IQuery sourceQuery, ICondition condition, CommandParameters parameters, string objectName)
         {
-            if (queryItem == null)
+            if (condition == null)
             {
-                return TranslateResult.Empty;
+                return QueryTranslationResult.Empty;
             }
-            Criteria criteria = queryItem.Item2 as Criteria;
-            if (criteria != null)
+            if (condition is Criterion criterion)
             {
-                return TranslateCriteria(query, criteria, parameters, objectName);
+                return TranslateCriterion(sourceQuery, criterion, parameters, objectName);
             }
-            IQuery groupQuery = queryItem.Item2 as IQuery;
-            if (groupQuery != null && !groupQuery.Criterias.IsNullOrEmpty())
+            if (condition is IQuery groupQuery && !groupQuery.Conditions.IsNullOrEmpty())
             {
-                groupQuery.SetEntityType(query.GetEntityType());
-                var criteriasCount = groupQuery.Criterias.Count();
-                if (criteriasCount == 1)
+                groupQuery.SetEntityType(sourceQuery.GetEntityType());
+                var conditionCount = groupQuery.Conditions.Count();
+                if (conditionCount == 1)
                 {
-                    var firstCriterias = groupQuery.Criterias.First();
-                    if (firstCriterias.Item2 is Criteria)
+                    var firstCondition = groupQuery.Conditions.First();
+                    if (firstCondition is Criterion firstCriterion)
                     {
-                        return TranslateCriteria(groupQuery, firstCriterias.Item2 as Criteria, parameters, objectName);
+                        return TranslateCriterion(groupQuery, firstCriterion, parameters, objectName);
                     }
-                    return TranslateCondition(groupQuery, firstCriterias, parameters, objectName);
+                    return TranslateCondition(groupQuery, firstCondition, parameters, objectName);
                 }
                 StringBuilder subCondition = new StringBuilder("(");
                 List<string> groupWithScripts = new List<string>();
                 string recurveTableName = string.Empty;
                 string recurveTablePetName = string.Empty;
                 int index = 0;
-                foreach (var subQueryItem in groupQuery.Criterias)
+                foreach (var subQueryItem in groupQuery.Conditions)
                 {
                     var subGroupResult = TranslateCondition(groupQuery, subQueryItem, parameters, objectName);
                     if (!subGroupResult.WithScripts.IsNullOrEmpty())
@@ -332,144 +345,148 @@ namespace EZNEW.Data.SQLite
                         recurveTablePetName = subGroupResult.RecurvePetName;
                         groupWithScripts.AddRange(subGroupResult.WithScripts);
                     }
-                    subCondition.Append($" {(index > 0 ? subQueryItem.Item1.ToString() : string.Empty)} {subGroupResult.ConditionString}");
+                    subCondition.Append($" {(index > 0 ? subQueryItem.ConnectionOperator.ToString() : string.Empty)} {subGroupResult.ConditionString}");
                     index++;
                 }
-                var groupResult = TranslateResult.CreateNewResult(subCondition.Append(")").ToString());
+                var groupResult = QueryTranslationResult.Create(subCondition.Append(")").ToString());
                 groupResult.RecurveObjectName = recurveTableName;
                 groupResult.RecurvePetName = recurveTablePetName;
                 groupResult.WithScripts = groupWithScripts;
                 return groupResult;
             }
-            return TranslateResult.Empty;
+            return QueryTranslationResult.Empty;
         }
 
         /// <summary>
-        /// Translate Single Criteria
+        /// Translate criterion
         /// </summary>
-        /// <param name="criteria">criteria</param>
-        /// <param name="parameters">parameters</param>
-        /// <returns></returns>
-        TranslateResult TranslateCriteria(IQuery query, Criteria criteria, CommandParameters parameters, string objectName)
+        /// <param name="sourceQuery">Source query</param>
+        /// <param name="criterion">Criterion</param>
+        /// <param name="parameters">Parameters</param>
+        /// <param name="objectName">Object name</param>
+        /// <returns>Return query translation result</returns>
+        QueryTranslationResult TranslateCriterion(IQuery sourceQuery, Criterion criterion, CommandParameters parameters, string objectName)
         {
-            if (criteria == null)
+            if (criterion == null)
             {
-                return TranslateResult.Empty;
+                return QueryTranslationResult.Empty;
             }
-            string sqlOperator = GetOperator(criteria.Operator);
-            bool needParameter = OperatorNeedParameter(criteria.Operator);
-            string criteriaFieldName = ConvertCriteriaName(query, objectName, criteria);
+            string sqlOperator = GetOperator(criterion.Operator);
+            bool needParameter = OperatorNeedParameter(criterion.Operator);
+            string criterionFieldName = ConvertCriterionFieldName(sourceQuery, objectName, criterion);
             if (!needParameter)
             {
-                return TranslateResult.CreateNewResult($"{criteriaFieldName} {sqlOperator}");
+                return QueryTranslationResult.Create($"{criterionFieldName} {sqlOperator}");
             }
-            IQuery valueQuery = criteria.Value as IQuery;
-            string parameterName = GetNewParameterName(criteria.Name);
-            if (valueQuery != null)
+            string parameterName = GetNewParameterName(criterion.Name);
+            if (criterion.Value is IQuery subquery)
             {
-                var valueQueryObjectName = DataManager.GetQueryRelationObjectName(DatabaseServerType.SQLite, valueQuery);
-                if (valueQuery.QueryFields.IsNullOrEmpty())
+                var subqueryObjectName = DataAccessContext.GetSubqueryEntityObjectName(subquery);
+                if (subquery.QueryFields.IsNullOrEmpty())
                 {
-                    throw new EZNEWException($"The {valueQueryObjectName} query object that is a subquery must have at least one query field set");
+                    throw new EZNEWException($"The {subqueryObjectName} query object that is a subquery must have at least one query field set");
                 }
-                var valueQueryField = DataManager.GetField(DatabaseServerType.SQLite, valueQuery, valueQuery.QueryFields.First());
-                string subObjName = GetNewSubObjectPetName();
-                var subqueryLimitResult = GetSubqueryLimitCondition(sqlOperator, valueQuery.QuerySize);
+                var subqueryField = DataManager.GetField(DatabaseServerType, subquery, subquery.QueryFields.First());
+                string subqueryObjectPetName = GetNewSubObjectPetName();
+                var subqueryLimitResult = GetSubqueryLimitCondition(sqlOperator, subquery.QuerySize);
                 string topString = subqueryLimitResult.Item2;
-                var userOrder = !string.IsNullOrWhiteSpace(topString);
-                var subQueryResult = ExecuteTranslate(valueQuery, parameters, subObjName, true, userOrder);
-                string conditionString = string.IsNullOrWhiteSpace(subQueryResult.ConditionString) ? string.Empty : $"WHERE {subQueryResult.ConditionString}";
-                string orderString = string.IsNullOrWhiteSpace(subQueryResult.OrderString) ? string.Empty : $"ORDER BY {subQueryResult.OrderString}";
-                string valueQueryCondition;
+                var userSort = !string.IsNullOrWhiteSpace(topString);
+                var subqueryTranslationResult = ExecuteTranslation(subquery, QueryLocation.Subuery, parameters, subqueryObjectPetName, userSort);
+                string subqueryConditionString = string.IsNullOrWhiteSpace(subqueryTranslationResult.ConditionString) ? string.Empty : $"WHERE {subqueryTranslationResult.ConditionString}";
+                string subquerySortString = string.IsNullOrWhiteSpace(subqueryTranslationResult.SortString) ? string.Empty : $"ORDER BY {subqueryTranslationResult.SortString}";
+                string subqueryCondition;
                 if (subqueryLimitResult.Item1)
                 {
-                    valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
-                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {subObjName}.{SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM {SQLiteFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString}) AS S{subObjName})"
-                        : $"{criteriaFieldName} {sqlOperator} (SELECT {SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {subObjName}.{SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM {SQLiteFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString}) AS S{subObjName})";
+                    subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
+                        ? $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString}) AS S{subqueryObjectPetName})"
+                        : $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString}) AS S{subqueryObjectPetName})";
                 }
                 else
                 {
-                    valueQueryCondition = string.IsNullOrWhiteSpace(subQueryResult.CombineScript)
-                        ? $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.{SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM {SQLiteFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {orderString} {topString})"
-                        : $"{criteriaFieldName} {sqlOperator} (SELECT {subObjName}.{SQLiteFactory.WrapKeyword(valueQueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(subObjName, valueQuery, valueQuery.GetEntityType(), true, false))} FROM {SQLiteFactory.WrapKeyword(valueQueryObjectName)} AS {subObjName} {(subQueryResult.AllowJoin ? subQueryResult.JoinScript : string.Empty)} {conditionString} {subQueryResult.CombineScript}) AS {subObjName} {orderString} {topString})";
+                    subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
+                        ? $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString})"
+                        : $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString})";
                 }
-                var valueQueryResult = TranslateResult.CreateNewResult(valueQueryCondition);
-                if (!subQueryResult.WithScripts.IsNullOrEmpty())
+                var subqueryResult = QueryTranslationResult.Create(subqueryCondition);
+                if (!subqueryTranslationResult.WithScripts.IsNullOrEmpty())
                 {
-                    valueQueryResult.WithScripts = new List<string>(subQueryResult.WithScripts);
-                    valueQueryResult.RecurveObjectName = subQueryResult.RecurveObjectName;
-                    valueQueryResult.RecurvePetName = subQueryResult.RecurvePetName;
+                    subqueryResult.WithScripts = new List<string>(subqueryTranslationResult.WithScripts);
+                    subqueryResult.RecurveObjectName = subqueryTranslationResult.RecurveObjectName;
+                    subqueryResult.RecurvePetName = subqueryTranslationResult.RecurvePetName;
                 }
-                return valueQueryResult;
+                return subqueryResult;
             }
-            var needWrapParameter = NeedWrapParameter(criteria.Operator);
+            var needWrapParameter = NeedWrapParameter(criterion.Operator);
             if (needWrapParameter)
             {
-                var parameterValues = criteria.GetCriteriaRealValue();
-                List<string> parameterStringValues = new List<string>();
+                var parameterValues = criterion.Value;
+                List<string> parameterNames = new List<string>();
+                int valParameterIndex = 0;
                 foreach (var val in parameterValues)
                 {
-                    parameterStringValues.Add($"'{val?.ToString() ?? string.Empty}'");
+                    var valParameterName = $"{parameterName}{valParameterIndex++}";
+                    parameterNames.Add($"{SQLiteManager.ParameterPrefix}{valParameterName}");
+                    parameters.Add(valParameterName, FormatCriterionValue(criterion.Operator, val));
                 }
-                var criteriaCondition = $"{criteriaFieldName} {sqlOperator} ({string.Join(",", parameterStringValues)})";
-                return TranslateResult.CreateNewResult(criteriaCondition);
+                var criterionCondition = $"{criterionFieldName} {sqlOperator} ({string.Join(",", parameterNames)})";
+                return QueryTranslationResult.Create(criterionCondition);
             }
             else
             {
-                parameters.Add(parameterName, FormatCriteriaValue(criteria.Operator, criteria.GetCriteriaRealValue()));
-                var criteriaCondition = $"{criteriaFieldName} {sqlOperator} {SQLiteFactory.ParameterPrefix}{parameterName}";
-                return TranslateResult.CreateNewResult(criteriaCondition);
+                parameters.Add(parameterName, FormatCriterionValue(criterion.Operator, criterion.Value));
+                var criterionCondition = $"{criterionFieldName} {sqlOperator} {SQLiteManager.ParameterPrefix}{parameterName}";
+                return QueryTranslationResult.Create(criterionCondition);
             }
         }
 
         /// <summary>
-        /// get sql operator by condition operator
+        /// Get sql operator by criterion operator
         /// </summary>
-        /// <param name="criteriaOperator"></param>
+        /// <param name="criterionOperator">Criterion operator</param>
         /// <returns></returns>
-        string GetOperator(CriteriaOperator criteriaOperator)
+        string GetOperator(CriterionOperator criterionOperator)
         {
             string sqlOperator = string.Empty;
-            switch (criteriaOperator)
+            switch (criterionOperator)
             {
-                case CriteriaOperator.Equal:
+                case CriterionOperator.Equal:
                     sqlOperator = EqualOperator;
                     break;
-                case CriteriaOperator.GreaterThan:
+                case CriterionOperator.GreaterThan:
                     sqlOperator = GreaterThanOperator;
                     break;
-                case CriteriaOperator.GreaterThanOrEqual:
+                case CriterionOperator.GreaterThanOrEqual:
                     sqlOperator = GreaterThanOrEqualOperator;
                     break;
-                case CriteriaOperator.NotEqual:
+                case CriterionOperator.NotEqual:
                     sqlOperator = NotEqualOperator;
                     break;
-                case CriteriaOperator.LessThan:
+                case CriterionOperator.LessThan:
                     sqlOperator = LessThanOperator;
                     break;
-                case CriteriaOperator.LessThanOrEqual:
+                case CriterionOperator.LessThanOrEqual:
                     sqlOperator = LessThanOrEqualOperator;
                     break;
-                case CriteriaOperator.In:
+                case CriterionOperator.In:
                     sqlOperator = InOperator;
                     break;
-                case CriteriaOperator.NotIn:
+                case CriterionOperator.NotIn:
                     sqlOperator = NotInOperator;
                     break;
-                case CriteriaOperator.Like:
-                case CriteriaOperator.BeginLike:
-                case CriteriaOperator.EndLike:
+                case CriterionOperator.Like:
+                case CriterionOperator.BeginLike:
+                case CriterionOperator.EndLike:
                     sqlOperator = LikeOperator;
                     break;
-                case CriteriaOperator.NotLike:
-                case CriteriaOperator.NotBeginLike:
-                case CriteriaOperator.NotEndLike:
+                case CriterionOperator.NotLike:
+                case CriterionOperator.NotBeginLike:
+                case CriterionOperator.NotEndLike:
                     sqlOperator = NotLikeOperator;
                     break;
-                case CriteriaOperator.IsNull:
+                case CriterionOperator.IsNull:
                     sqlOperator = IsNullOperator;
                     break;
-                case CriteriaOperator.NotNull:
+                case CriterionOperator.NotNull:
                     sqlOperator = NotNullOperator;
                     break;
             }
@@ -477,17 +494,17 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// operator need parameter
+        /// Indicates operator whether need parameter
         /// </summary>
-        /// <param name="criteriaOperator">criteria operator</param>
+        /// <param name="criterionOperator">Criterion operator</param>
         /// <returns></returns>
-        bool OperatorNeedParameter(CriteriaOperator criteriaOperator)
+        bool OperatorNeedParameter(CriterionOperator criterionOperator)
         {
             bool needParameter = true;
-            switch (criteriaOperator)
+            switch (criterionOperator)
             {
-                case CriteriaOperator.NotNull:
-                case CriteriaOperator.IsNull:
+                case CriterionOperator.NotNull:
+                case CriterionOperator.IsNull:
                     needParameter = false;
                     break;
             }
@@ -495,26 +512,26 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// Format Value
+        /// Format criterion value
         /// </summary>
-        /// <param name="criteriaOperator">condition operator</param>
-        /// <param name="value">value</param>
-        /// <returns></returns>
-        dynamic FormatCriteriaValue(CriteriaOperator criteriaOperator, dynamic value)
+        /// <param name="criterionOperator">Criterion operator</param>
+        /// <param name="value">Value</param>
+        /// <returns>Return formated criterion value</returns>
+        dynamic FormatCriterionValue(CriterionOperator criterionOperator, dynamic value)
         {
             dynamic realValue = value;
-            switch (criteriaOperator)
+            switch (criterionOperator)
             {
-                case CriteriaOperator.Like:
-                case CriteriaOperator.NotLike:
+                case CriterionOperator.Like:
+                case CriterionOperator.NotLike:
                     realValue = $"%{value}%";
                     break;
-                case CriteriaOperator.BeginLike:
-                case CriteriaOperator.NotBeginLike:
+                case CriterionOperator.BeginLike:
+                case CriterionOperator.NotBeginLike:
                     realValue = $"{value}%";
                     break;
-                case CriteriaOperator.EndLike:
-                case CriteriaOperator.NotEndLike:
+                case CriterionOperator.EndLike:
+                case CriterionOperator.NotEndLike:
                     realValue = $"%{value}";
                     break;
             }
@@ -522,49 +539,56 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// convert criteria
+        /// Convert criterion field name
         /// </summary>
-        /// <param name="objectName">object name</param>
-        /// <param name="criteria">criteria</param>
+        /// <param name="query">Query object</param>
+        /// <param name="objectName">Object name</param>
+        /// <param name="criterion">Criterion</param>
         /// <returns></returns>
-        string ConvertCriteriaName(IQuery query, string objectName, Criteria criteria)
+        string ConvertCriterionFieldName(IQuery query, string objectName, Criterion criterion)
         {
-            return FormatCriteriaName(query, objectName, criteria.Name, criteria.Converter);
+            return ConvertFieldName(query, objectName, criterion.Name, criterion.Options?.FieldConversionOptions);
         }
 
         /// <summary>
-        /// convert order criteria name
+        /// Convert sort field name
         /// </summary>
-        /// <param name="objectName">object name</param>
-        /// <param name="orderCriteria">order criteria</param>
+        /// <param name="query">Query object</param>
+        /// <param name="objectName">Object name</param>
+        /// <param name="sortEntry">Sort entry</param>
         /// <returns></returns>
-        string ConvertOrderCriteriaName(IQuery query, string objectName, SortCriteria orderCriteria)
+        string ConvertSortFieldName(IQuery query, string objectName, SortEntry sortEntry)
         {
-            return FormatCriteriaName(query, objectName, orderCriteria.Name, orderCriteria.Converter);
+            return ConvertFieldName(query, objectName, sortEntry.Name, sortEntry.Options?.FieldConversionOptions);
         }
 
         /// <summary>
-        /// format criteria name
+        /// Convert field name
         /// </summary>
-        /// <param name="objectName">object name</param>
-        /// <param name="fieldName">field name</param>
-        /// <param name="convert">convert</param>
-        /// <returns></returns>
-        string FormatCriteriaName(IQuery query, string objectName, string fieldName, ICriteriaConverter convert)
+        /// <param name="objectName">Object name</param>
+        /// <param name="fieldName">Field name</param>
+        /// <param name="fieldConversionOptions">Field conversion options</param>
+        /// <returns>Return new field name</returns>
+        string ConvertFieldName(IQuery query, string objectName, string fieldName, FieldConversionOptions fieldConversionOptions)
         {
-            var field = DataManager.GetField(DatabaseServerType.SQLite, query, fieldName);
+            var field = DataManager.GetField(DatabaseServerType, query, fieldName);
             fieldName = field.FieldName;
-            if (convert == null)
+            if (fieldConversionOptions == null)
             {
-                return $"{objectName}.{SQLiteFactory.WrapKeyword(fieldName)}";
+                return $"{objectName}.{SQLiteManager.WrapKeyword(fieldName)}";
             }
-            return SQLiteFactory.ParseCriteriaConverter(convert, objectName, fieldName);
+            var fieldConversionResult = SQLiteManager.ConvertField(DatabaseServer, fieldConversionOptions, objectName, fieldName);
+            if (string.IsNullOrWhiteSpace(fieldConversionResult?.NewFieldName))
+            {
+                throw new EZNEWException($"{DatabaseServerType}-{fieldConversionOptions.ConversionName}:new field name is null or empty.");
+            }
+            return fieldConversionResult.NewFieldName;
         }
 
         /// <summary>
-        /// get join operator
+        /// Get join operator
         /// </summary>
-        /// <param name="joinType">join type</param>
+        /// <param name="joinType">Join type</param>
         /// <returns></returns>
         string GetJoinOperator(JoinType joinType)
         {
@@ -592,20 +616,22 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// get join condition
+        /// Get join condition
         /// </summary>
-        /// <param name="sourceQuery">source query</param>
-        /// <param name="joinItem">join item</param>
-        /// <returns></returns>
-        string GetJoinCondition(IQuery sourceQuery, JoinItem joinItem, string sourceObjShortName, string targetObjShortName)
+        /// <param name="sourceQuery">Source query</param>
+        /// <param name="joinEntry">Join entry</param>
+        /// <param name="sourceObjectPetName">Source object pet name</param>
+        /// <param name="targetObjectPetName">Target object pet name</param>
+        /// <returns>Return join condition</returns>
+        string GetJoinCondition(IQuery sourceQuery, JoinEntry joinEntry, string sourceObjectPetName, string targetObjectPetName)
         {
-            if (joinItem.JoinType == JoinType.CrossJoin)
+            if (joinEntry.JoinType == JoinType.CrossJoin)
             {
                 return string.Empty;
             }
-            var joinFields = joinItem?.JoinFields.Where(r => !string.IsNullOrWhiteSpace(r.Key) && !string.IsNullOrWhiteSpace(r.Value));
+            var joinFields = joinEntry?.JoinFields.Where(r => !string.IsNullOrWhiteSpace(r.Key) && !string.IsNullOrWhiteSpace(r.Value));
             var sourceEntityType = sourceQuery.GetEntityType();
-            var targetEntityType = joinItem.JoinQuery.GetEntityType();
+            var targetEntityType = joinEntry.JoinQuery.GetEntityType();
             bool useValueAsSource = false;
             if (joinFields.IsNullOrEmpty())
             {
@@ -639,18 +665,18 @@ namespace EZNEW.Data.SQLite
                 {
                     continue;
                 }
-                var sourceField = DataManager.GetField(DatabaseServerType.SQLite, sourceEntityType, joinField.Key);
-                var targetField = DataManager.GetField(DatabaseServerType.SQLite, targetEntityType, joinField.Value);
-                joinList.Add($" {sourceObjShortName}.{SQLiteFactory.WrapKeyword(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}{GetJoinOperator(joinItem.Operator)}{targetObjShortName}.{SQLiteFactory.WrapKeyword(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}");
+                var sourceField = DataManager.GetField(DatabaseServerType, sourceEntityType, joinField.Key);
+                var targetField = DataManager.GetField(DatabaseServerType, targetEntityType, joinField.Value);
+                joinList.Add($" {sourceObjectPetName}.{SQLiteManager.WrapKeyword(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}{GetJoinOperator(joinEntry.Operator)}{targetObjectPetName}.{SQLiteManager.WrapKeyword(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}");
             }
             return joinList.IsNullOrEmpty() ? string.Empty : " ON" + string.Join(" AND", joinList);
         }
 
         /// <summary>
-        /// get sql operator by condition operator
+        /// Get sql operator by join operator
         /// </summary>
-        /// <param name="joinOperator"></param>
-        /// <returns></returns>
+        /// <param name="joinOperator">Join operator</param>
+        /// <returns>Return a sql operator</returns>
         string GetJoinOperator(JoinOperator joinOperator)
         {
             string sqlOperator = string.Empty;
@@ -679,9 +705,9 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// format with script
+        /// Format with script
         /// </summary>
-        /// <returns></returns>
+        /// <returns>Return formated with script</returns>
         string FormatWithScript(List<string> withScripts)
         {
             if (withScripts.IsNullOrEmpty())
@@ -692,8 +718,8 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// get new recurve table name
-        /// item1:petname,item2:fullname
+        /// Get new recurve table name
+        /// Item1:petname,Item2:fullname
         /// </summary>
         /// <returns></returns>
         Tuple<string, string> GetNewRecurveTableName()
@@ -707,7 +733,7 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// get new sub object pet name
+        /// Get a new sub object pet name
         /// </summary>
         /// <returns></returns>
         string GetNewSubObjectPetName()
@@ -716,7 +742,7 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// 
+        /// Gets a new parameter name
         /// </summary>
         /// <returns></returns>
         string GetNewParameterName(string originParameterName)
@@ -725,7 +751,7 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// init
+        /// Init translator
         /// </summary>
         void Init()
         {
@@ -733,12 +759,12 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// get sub query limit condition
-        /// item1:use wapper subquery condition
-        /// item2:limit string
+        /// Get subquery limit condition
+        /// Item1:use wapper subquery condition
+        /// Item2:limit string
         /// </summary>
-        /// <param name="sqlOperator">sql operator</param>
-        /// <param name="querySize">query size</param>
+        /// <param name="sqlOperator">Sql operator</param>
+        /// <param name="querySize">Query size</param>
         Tuple<bool, string> GetSubqueryLimitCondition(string sqlOperator, int querySize)
         {
             var limitString = string.Empty;
@@ -802,12 +828,17 @@ namespace EZNEW.Data.SQLite
             return primaryKeys;
         }
 
-        bool NeedWrapParameter(CriteriaOperator criteriaOperator)
+        /// <summary>
+        /// Check parameter whether need wrap
+        /// </summary>
+        /// <param name="criterionOperator">Criterion operator</param>
+        /// <returns></returns>
+        bool NeedWrapParameter(CriterionOperator criterionOperator)
         {
-            switch (criteriaOperator)
+            switch (criterionOperator)
             {
-                case CriteriaOperator.In:
-                case CriteriaOperator.NotIn:
+                case CriterionOperator.In:
+                case CriterionOperator.NotIn:
                     return true;
                 default:
                     return false;

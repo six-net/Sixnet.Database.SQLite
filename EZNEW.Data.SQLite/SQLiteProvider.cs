@@ -4,15 +4,15 @@ using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using EZNEW.Data.Configuration;
-using EZNEW.Development.Command;
-using EZNEW.Development.Command.Modification;
-using EZNEW.Development.Query;
-using EZNEW.Development.Query.Translator;
-using EZNEW.Development.Entity;
-using EZNEW.Exceptions;
 using Microsoft.Data.Sqlite;
 using Dapper;
+using EZNEW.Data.Configuration;
+using EZNEW.Development.Command;
+using EZNEW.Development.Query;
+using EZNEW.Development.Query.Translation;
+using EZNEW.Development.Entity;
+using EZNEW.Exceptions;
+using EZNEW.Data.Modification;
 
 namespace EZNEW.Data.SQLite
 {
@@ -21,49 +21,64 @@ namespace EZNEW.Data.SQLite
     /// </summary>
     public class SQLiteProvider : IDatabaseProvider
     {
+        const DatabaseServerType CurrentDatabaseServerType = SQLiteManager.CurrentDatabaseServerType;
+
         #region Execute
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOptions">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecutionOptions executeOptions, IEnumerable<ICommand> commands)
+        /// <returns>Return affected data number</returns>
+        public int Execute(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<ICommand> commands)
         {
-            return ExecuteAsync(server, executeOptions, commands).Result;
+            return ExecuteAsync(server, executionOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public int Execute(DatabaseServer server, CommandExecutionOptions executeOption, params ICommand[] commands)
+        /// <returns>Return affected data number</returns>
+        public int Execute(DatabaseServer server, CommandExecutionOptions executionOptions, params ICommand[] commands)
         {
-            return ExecuteAsync(server, executeOption, commands).Result;
+            return ExecuteAsync(server, executionOptions, commands).Result;
         }
 
         /// <summary>
         /// Execute command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute options</param>
+        /// <param name="executionOptions">Execution options</param>
         /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<ICommand> commands)
+        /// <returns>Return affected data number</returns>
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executionOptions, params ICommand[] commands)
         {
-            #region group execute commands
+            IEnumerable<ICommand> cmdCollection = commands;
+            return await ExecuteAsync(server, executionOptions, cmdCollection).ConfigureAwait(false);
+        }
 
-            IQueryTranslator translator = SQLiteFactory.GetQueryTranslator(server);
-            List<DatabaseExecutionCommand> executeCommands = new List<DatabaseExecutionCommand>();
-            var batchExecuteConfig = DataManager.GetBatchExecutionConfiguration(server.ServerType) ?? BatchExecutionConfiguration.Default;
-            var groupStatementsCount = batchExecuteConfig.GroupStatementsCount;
+        /// <summary>
+        /// Execute command
+        /// </summary>
+        /// <param name="server">Database server</param>
+        /// <param name="executionOptions">Execution options</param>
+        /// <param name="commands">Commands</param>
+        /// <returns>Return affected data number</returns>
+        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<ICommand> commands)
+        {
+            #region group execution commands
+
+            IQueryTranslator translator = SQLiteManager.GetQueryTranslator(DataAccessContext.Create(server));
+            List<DatabaseExecutionCommand> databaseExecutionCommands = new List<DatabaseExecutionCommand>();
+            var batchExecutionConfig = DataManager.GetBatchExecutionConfiguration(server.ServerType) ?? BatchExecutionConfiguration.Default;
+            var groupStatementsCount = batchExecutionConfig.GroupStatementsCount;
             groupStatementsCount = groupStatementsCount < 0 ? 1 : groupStatementsCount;
-            var groupParameterCount = batchExecuteConfig.GroupParametersCount;
+            var groupParameterCount = batchExecutionConfig.GroupParametersCount;
             groupParameterCount = groupParameterCount < 0 ? 1 : groupParameterCount;
             StringBuilder commandTextBuilder = new StringBuilder();
             CommandParameters parameters = null;
@@ -73,11 +88,11 @@ namespace EZNEW.Data.SQLite
 
             DatabaseExecutionCommand GetGroupExecuteCommand()
             {
-                var executeCommand = new DatabaseExecutionCommand()
+                var executionCommand = new DatabaseExecutionCommand()
                 {
                     CommandText = commandTextBuilder.ToString(),
                     CommandType = CommandType.Text,
-                    ForceReturnValue = forceReturnValue,
+                    MustAffectedData = forceReturnValue,
                     Parameters = parameters
                 };
                 statementsCount = 0;
@@ -85,87 +100,75 @@ namespace EZNEW.Data.SQLite
                 commandTextBuilder.Clear();
                 parameters = null;
                 forceReturnValue = false;
-                return executeCommand;
+                return executionCommand;
             }
 
             foreach (var cmd in commands)
             {
-                DatabaseExecutionCommand executeCommand = GetExecuteDbCommand(translator, cmd as DefaultCommand);
-                if (executeCommand == null)
+                DatabaseExecutionCommand databaseExecutionCommand = GetDatabaseExecutionCommand(translator, cmd as DefaultCommand);
+                if (databaseExecutionCommand == null)
                 {
                     continue;
                 }
 
                 //Trace log
-                SQLiteFactory.LogExecutionCommand(executeCommand);
+                SQLiteManager.LogExecutionCommand(databaseExecutionCommand);
 
                 cmdCount++;
-                if (executeCommand.PerformAlone)
+                if (databaseExecutionCommand.PerformAlone)
                 {
                     if (statementsCount > 0)
                     {
-                        executeCommands.Add(GetGroupExecuteCommand());
+                        databaseExecutionCommands.Add(GetGroupExecuteCommand());
                     }
-                    executeCommands.Add(executeCommand);
+                    databaseExecutionCommands.Add(databaseExecutionCommand);
                     continue;
                 }
-                commandTextBuilder.AppendLine(executeCommand.CommandText);
-                parameters = parameters == null ? executeCommand.Parameters : parameters.Union(executeCommand.Parameters);
-                forceReturnValue |= executeCommand.ForceReturnValue;
+                commandTextBuilder.AppendLine(databaseExecutionCommand.CommandText);
+                parameters = parameters == null ? databaseExecutionCommand.Parameters : parameters.Union(databaseExecutionCommand.Parameters);
+                forceReturnValue |= databaseExecutionCommand.MustAffectedData;
                 statementsCount++;
                 if (translator.ParameterSequence >= groupParameterCount || statementsCount >= groupStatementsCount)
                 {
-                    executeCommands.Add(GetGroupExecuteCommand());
+                    databaseExecutionCommands.Add(GetGroupExecuteCommand());
                 }
             }
             if (statementsCount > 0)
             {
-                executeCommands.Add(GetGroupExecuteCommand());
+                databaseExecutionCommands.Add(GetGroupExecuteCommand());
             }
 
             #endregion
 
-            return await ExecuteCommandAsync(server, executeOption, executeCommands, executeOption?.ExecuteByTransaction ?? cmdCount > 1).ConfigureAwait(false);
+            return await ExecuteDatabaseCommandAsync(server, executionOptions, databaseExecutionCommands, executionOptions?.ExecutionByTransaction ?? cmdCount > 1).ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Execute command
+        /// Execute database command
         /// </summary>
         /// <param name="server">Database server</param>
-        /// <param name="executeOption">Execute options</param>
-        /// <param name="commands">Commands</param>
-        /// <returns>Return the affected data numbers</returns>
-        public async Task<int> ExecuteAsync(DatabaseServer server, CommandExecutionOptions executeOption, params ICommand[] commands)
-        {
-            IEnumerable<ICommand> cmdCollection = commands;
-            return await ExecuteAsync(server, executeOption, cmdCollection).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Execute commands
-        /// </summary>
-        /// <param name="server">Database server</param>
-        /// <param name="executeCommands">Execute commands</param>
-        /// <param name="useTransaction">Use transaction</param>
-        /// <returns>Return the affected data numbers</returns>
-        async Task<int> ExecuteCommandAsync(DatabaseServer server, CommandExecutionOptions executeOption, IEnumerable<DatabaseExecutionCommand> executeCommands, bool useTransaction)
+        /// <param name="executionOptions">Execution options</param>
+        /// <param name="databaseExecutionCommands">Database execution commands</param>
+        /// <param name="useTransaction">Whether use transaction</param>
+        /// <returns>Return affected data number</returns>
+        async Task<int> ExecuteDatabaseCommandAsync(DatabaseServer server, CommandExecutionOptions executionOptions, IEnumerable<DatabaseExecutionCommand> databaseExecutionCommands, bool useTransaction)
         {
             int resultValue = 0;
             bool success = true;
-            using (var conn = SQLiteFactory.GetConnection(server))
+            using (var conn = SQLiteManager.GetConnection(server))
             {
                 IDbTransaction transaction = null;
                 if (useTransaction)
                 {
-                    transaction = SQLiteFactory.GetExecuteTransaction(conn, executeOption);
+                    transaction = SQLiteManager.GetExecutionTransaction(conn, executionOptions);
                 }
                 try
                 {
-                    foreach (var cmd in executeCommands)
+                    foreach (var cmd in databaseExecutionCommands)
                     {
-                        var cmdDefinition = new CommandDefinition(cmd.CommandText, SQLiteFactory.ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executeOption?.CancellationToken ?? default);
+                        var cmdDefinition = new CommandDefinition(cmd.CommandText, SQLiteManager.ConvertCmdParameters(cmd.Parameters), transaction: transaction, commandType: cmd.CommandType, cancellationToken: executionOptions?.CancellationToken ?? default);
                         var executeResultValue = await conn.ExecuteAsync(cmdDefinition).ConfigureAwait(false);
-                        success = success && (cmd.ForceReturnValue ? executeResultValue > 0 : true);
+                        success = success && (cmd.MustAffectedData ? executeResultValue > 0 : true);
                         resultValue += executeResultValue;
                         if (useTransaction && !success)
                         {
@@ -197,20 +200,21 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// Get execute database execute command
+        /// Get database execution command
         /// </summary>
+        /// <param name="queryTranslator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return execute command</returns>
-        DatabaseExecutionCommand GetExecuteDbCommand(IQueryTranslator queryTranslator, DefaultCommand command)
+        /// <returns>Return a database execution command</returns>
+        DatabaseExecutionCommand GetDatabaseExecutionCommand(IQueryTranslator queryTranslator, DefaultCommand command)
         {
             DatabaseExecutionCommand GetTextCommand()
             {
                 return new DatabaseExecutionCommand()
                 {
-                    CommandText = command.CommandText,
-                    Parameters = SQLiteFactory.ParseParameters(command.Parameters),
-                    CommandType = SQLiteFactory.GetCommandType(command),
-                    ForceReturnValue = command.MustReturnValueOnSuccess,
+                    CommandText = command.Text,
+                    Parameters = SQLiteManager.ConvertParameter(command.Parameters),
+                    CommandType = SQLiteManager.GetCommandType(command),
+                    MustAffectedData = command.MustAffectedData,
                     HasPreScript = true
                 };
             }
@@ -218,63 +222,70 @@ namespace EZNEW.Data.SQLite
             {
                 return GetTextCommand();
             }
-            DatabaseExecutionCommand executeCommand;
-            switch (command.OperateType)
+            DatabaseExecutionCommand databaseExecutionCommand;
+            switch (command.OperationType)
             {
                 case CommandOperationType.Insert:
-                    executeCommand = GetInsertExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseInsertionCommand(queryTranslator, command);
                     break;
                 case CommandOperationType.Update:
-                    executeCommand = GetUpdateExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseUpdateCommand(queryTranslator, command);
                     break;
                 case CommandOperationType.Delete:
-                    executeCommand = GetDeleteExecuteDbCommand(queryTranslator, command);
+                    databaseExecutionCommand = GetDatabaseDeletionCommand(queryTranslator, command);
                     break;
                 default:
-                    executeCommand = GetTextCommand();
+                    databaseExecutionCommand = GetTextCommand();
                     break;
             }
-            return executeCommand;
+            return databaseExecutionCommand;
         }
 
         /// <summary>
-        /// Get insert execute DbCommand
+        /// Get database insertion execution command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return insert execute command</returns>
-        DatabaseExecutionCommand GetInsertExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database insertion command</returns>
+        DatabaseExecutionCommand GetDatabaseInsertionCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-            var fields = DataManager.GetEditFields(DatabaseServerType.SQLite, command.EntityType);
+            translator.DataAccessContext.SetCommand(command);
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            var fields = DataManager.GetEditFields(CurrentDatabaseServerType, command.EntityType);
             var fieldCount = fields.GetCount();
-            var insertFormatResult = SQLiteFactory.FormatInsertFields(fieldCount, fields, command.Parameters, translator.ParameterSequence);
+            var insertFormatResult = SQLiteManager.FormatInsertionFields(command.EntityType, fieldCount, fields, command.Parameters, translator.ParameterSequence);
             if (insertFormatResult == null)
             {
                 return null;
             }
-            string cmdText = $"INSERT INTO {SQLiteFactory.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
+            string cmdText = $"INSERT INTO {SQLiteManager.WrapKeyword(objectName)} ({string.Join(",", insertFormatResult.Item1)}) VALUES ({string.Join(",", insertFormatResult.Item2)});";
             CommandParameters parameters = insertFormatResult.Item3;
             translator.ParameterSequence += fieldCount;
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = SQLiteFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = SQLiteManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters
             };
         }
 
         /// <summary>
-        /// Get update execute command
+        /// Get database update command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return update execute command</returns>
-        DatabaseExecutionCommand GetUpdateExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database update command</returns>
+        DatabaseExecutionCommand GetDatabaseUpdateCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            #region query translate
+            if (command?.Fields.IsNullOrEmpty() ?? true)
+            {
+                throw new EZNEWException($"No fields are set to update");
+            }
 
+            #region query translation
+
+            translator.DataAccessContext.SetCommand(command);
             var tranResult = translator.Translate(command.Query);
             string conditionString = string.Empty;
             if (!string.IsNullOrWhiteSpace(tranResult.ConditionString))
@@ -288,9 +299,9 @@ namespace EZNEW.Data.SQLite
 
             #region script 
 
-            CommandParameters parameters = SQLiteFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-            var fields = SQLiteFactory.GetFields(command.EntityType, command.Fields);
+            CommandParameters parameters = SQLiteManager.ConvertParameter(command.Parameters) ?? new CommandParameters();
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            var fields = SQLiteManager.GetFields(command.EntityType, command.Fields);
             int parameterSequence = translator.ParameterSequence;
             List<string> updateSetArray = new List<string>();
             foreach (var field in fields)
@@ -301,7 +312,7 @@ namespace EZNEW.Data.SQLite
                 if (parameterValue != null)
                 {
                     parameterSequence++;
-                    parameterName = SQLiteFactory.FormatParameterName(parameterName, parameterSequence);
+                    parameterName = SQLiteManager.FormatParameterName(parameterName, parameterSequence);
                     parameters.Rename(field.PropertyName, parameterName);
                     if (parameterValue is IModificationValue)
                     {
@@ -310,33 +321,33 @@ namespace EZNEW.Data.SQLite
                         if (parameterValue is CalculationModificationValue)
                         {
                             var calculateModifyValue = parameterValue as CalculationModificationValue;
-                            string calChar = SQLiteFactory.GetCalculateChar(calculateModifyValue.Operator);
-                            newValueExpression = $"{translator.ObjectPetName}.{SQLiteFactory.WrapKeyword(field.FieldName)}{calChar}{SQLiteFactory.ParameterPrefix}{parameterName}";
+                            string calChar = SQLiteManager.GetSystemCalculationOperator(calculateModifyValue.Operator);
+                            newValueExpression = $"{translator.ObjectPetName}.{SQLiteManager.WrapKeyword(field.FieldName)}{calChar}{SQLiteManager.ParameterPrefix}{parameterName}";
                         }
                     }
                 }
                 if (string.IsNullOrWhiteSpace(newValueExpression))
                 {
-                    newValueExpression = $"{SQLiteFactory.ParameterPrefix}{parameterName}";
+                    newValueExpression = $"{SQLiteManager.ParameterPrefix}{parameterName}";
                 }
-                updateSetArray.Add($"{SQLiteFactory.WrapKeyword(field.FieldName)}={newValueExpression}");
+                updateSetArray.Add($"{SQLiteManager.WrapKeyword(field.FieldName)}={newValueExpression}");
             }
             string cmdText = string.Empty;
-            string wrapObjectName = SQLiteFactory.WrapKeyword(objectName);
+            string wrapObjectName = SQLiteManager.WrapKeyword(objectName);
             if (string.IsNullOrWhiteSpace(joinScript))
             {
                 cmdText = $"{preScript}UPDATE {wrapObjectName} AS {translator.ObjectPetName} SET {string.Join(",", updateSetArray)} {conditionString};";
             }
-            else 
+            else
             {
-                var primaryKeyFields = DataManager.GetFields(DatabaseServerType.SQLite, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
+                var primaryKeyFields = DataManager.GetFields(CurrentDatabaseServerType, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
                 if (primaryKeyFields.IsNullOrEmpty())
                 {
                     throw new EZNEWException($"{command.EntityType?.FullName} not set primary key");
                 }
                 string updateTableShortName = "UTB";
 
-                cmdText = $"{preScript}UPDATE {wrapObjectName} AS {updateTableShortName} SET {string.Join(",", updateSetArray)} WHERE {string.Join("||", primaryKeyFields.Select(pk => updateTableShortName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
+                cmdText = $"{preScript}UPDATE {wrapObjectName} AS {updateTableShortName} SET {string.Join(",", updateSetArray)} WHERE {string.Join("||", primaryKeyFields.Select(pk => updateTableShortName + "." + SQLiteManager.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteManager.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
             }
             translator.ParameterSequence = parameterSequence;
 
@@ -344,7 +355,7 @@ namespace EZNEW.Data.SQLite
 
             #region parameter
 
-            var queryParameters = SQLiteFactory.ParseParameters(tranResult.Parameters);
+            var queryParameters = SQLiteManager.ConvertParameter(tranResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -352,22 +363,24 @@ namespace EZNEW.Data.SQLite
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = SQLiteFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = SQLiteManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
             };
         }
 
         /// <summary>
-        /// Get delete execute command
+        /// Get database deletion command
         /// </summary>
-        /// <param name="translator">Translator</param>
+        /// <param name="translator">Query translator</param>
         /// <param name="command">Command</param>
-        /// <returns>Return delete execute command</returns>
-        DatabaseExecutionCommand GetDeleteExecuteDbCommand(IQueryTranslator translator, DefaultCommand command)
+        /// <returns>Return a database deletion command</returns>
+        DatabaseExecutionCommand GetDatabaseDeletionCommand(IQueryTranslator translator, DefaultCommand command)
         {
-            #region query translate
+            translator.DataAccessContext.SetCommand(command);
+
+            #region query translation
 
             var tranResult = translator.Translate(command.Query);
             string conditionString = string.Empty;
@@ -382,30 +395,30 @@ namespace EZNEW.Data.SQLite
 
             #region script
 
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
             string cmdText = string.Empty;
-            string wrapObjectName = SQLiteFactory.WrapKeyword(objectName);
+            string wrapObjectName = SQLiteManager.WrapKeyword(objectName);
             if (string.IsNullOrWhiteSpace(joinScript))
             {
                 cmdText = $"{preScript}DELETE FROM {wrapObjectName} AS {translator.ObjectPetName} {conditionString};";
             }
             else
             {
-                var primaryKeyFields = DataManager.GetFields(DatabaseServerType.SQLite, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
+                var primaryKeyFields = DataManager.GetFields(CurrentDatabaseServerType, command.EntityType, EntityManager.GetPrimaryKeys(command.EntityType)).ToList();
                 if (primaryKeyFields.IsNullOrEmpty())
                 {
                     throw new EZNEWException($"{command.EntityType?.FullName} not set primary key");
                 }
                 string deleteTableShortName = "DTB";
-                cmdText = $"{preScript}DELETE FROM {wrapObjectName} AS {deleteTableShortName} WHERE {string.Join("||", primaryKeyFields.Select(pk => deleteTableShortName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteFactory.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
+                cmdText = $"{preScript}DELETE FROM {wrapObjectName} AS {deleteTableShortName} WHERE {string.Join("||", primaryKeyFields.Select(pk => deleteTableShortName + "." + SQLiteManager.WrapKeyword(pk.FieldName)))} IN (SELECT {string.Join("||", primaryKeyFields.Select(pk => translator.ObjectPetName + "." + SQLiteManager.WrapKeyword(pk.FieldName)))} FROM {wrapObjectName} AS {translator.ObjectPetName} {joinScript} {conditionString});";
             }
 
             #endregion
 
             #region parameter
 
-            CommandParameters parameters = SQLiteFactory.ParseParameters(command.Parameters) ?? new CommandParameters();
-            var queryParameters = SQLiteFactory.ParseParameters(tranResult.Parameters);
+            CommandParameters parameters = SQLiteManager.ConvertParameter(command.Parameters) ?? new CommandParameters();
+            var queryParameters = SQLiteManager.ConvertParameter(tranResult.Parameters);
             parameters.Union(queryParameters);
 
             #endregion
@@ -413,8 +426,8 @@ namespace EZNEW.Data.SQLite
             return new DatabaseExecutionCommand()
             {
                 CommandText = cmdText,
-                CommandType = SQLiteFactory.GetCommandType(command),
-                ForceReturnValue = command.MustReturnValueOnSuccess,
+                CommandType = SQLiteManager.GetCommandType(command),
+                MustAffectedData = command.MustAffectedData,
                 Parameters = parameters,
                 HasPreScript = !string.IsNullOrWhiteSpace(preScript)
             };
@@ -447,12 +460,12 @@ namespace EZNEW.Data.SQLite
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            IQueryTranslator translator = SQLiteFactory.GetQueryTranslator(server);
+            IQueryTranslator translator = SQLiteManager.GetQueryTranslator(DataAccessContext.Create(server, command));
             var tranResult = translator.Translate(command.Query);
             string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
 
@@ -461,26 +474,26 @@ namespace EZNEW.Data.SQLite
             #region script
 
             string cmdText;
-            switch (command.Query.QueryType)
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
+                case QueryExecutionMode.Text:
                     cmdText = tranResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
                     int size = command.Query.QuerySize;
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-                    string orderString = string.IsNullOrWhiteSpace(tranResult.OrderString) ? string.Empty : $"ORDER BY {tranResult.OrderString}";
-                    var queryFields = SQLiteFactory.GetQueryFields(command.Query, command.EntityType, true);
-                    string outputFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+                    string orderString = string.IsNullOrWhiteSpace(tranResult.SortString) ? string.Empty : $"ORDER BY {tranResult.SortString}";
+                    var queryFields = SQLiteManager.GetQueryFields(command.Query, command.EntityType, true);
+                    string outputFormatedField = string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, queryFields, true));
                     if (string.IsNullOrWhiteSpace(tranResult.CombineScript))
                     {
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     else
                     {
-                        string innerFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
-                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
+                        string innerFormatedField = string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                        cmdText = $"{tranResult.PreScript}SELECT {outputFormatedField} FROM (SELECT {innerFormatedField} FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName} {orderString} {(size > 0 ? $"LIMIT 0,{size}" : string.Empty)}";
                     }
                     break;
             }
@@ -489,40 +502,40 @@ namespace EZNEW.Data.SQLite
 
             #region parameter
 
-            var parameters = SQLiteFactory.ConvertCmdParameters(SQLiteFactory.ParseParameters(tranResult.Parameters));
+            var parameters = SQLiteManager.ConvertCmdParameters(SQLiteManager.ConvertParameter(tranResult.Parameters));
 
             #endregion
 
             //Trace log
-            SQLiteFactory.LogScript(cmdText, tranResult.Parameters);
+            SQLiteManager.LogScript(cmdText, tranResult.Parameters);
 
-            using (var conn = SQLiteFactory.GetConnection(server))
+            using (var conn = SQLiteManager.GetConnection(server))
             {
-                var tran = SQLiteFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = SQLiteManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query data paging
+        /// Query paging data
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Databse server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data paging</returns>
+        /// <returns>Return paging data</returns>
         public IEnumerable<T> QueryPaging<T>(DatabaseServer server, ICommand command)
         {
             return QueryPagingAsync<T>(server, command).Result;
         }
 
         /// <summary>
-        /// Query data paging
+        /// Query paging data
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Databse server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return data paging</returns>
+        /// <returns>Return paging data</returns>
         public async Task<IEnumerable<T>> QueryPagingAsync<T>(DatabaseServer server, ICommand command)
         {
             int beginIndex = 0;
@@ -563,12 +576,12 @@ namespace EZNEW.Data.SQLite
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            IQueryTranslator translator = SQLiteFactory.GetQueryTranslator(server);
+            IQueryTranslator translator = SQLiteManager.GetQueryTranslator(DataAccessContext.Create(server, command));
             var tranResult = translator.Translate(command.Query);
 
             #endregion
@@ -577,21 +590,21 @@ namespace EZNEW.Data.SQLite
 
             string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
             string cmdText;
-            switch (command.Query.QueryType)
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
+                case QueryExecutionMode.Text:
                     cmdText = tranResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
                     string limitString = $"LIMIT {offsetNum},{size}";
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-                    string defaultFieldName = SQLiteFactory.GetDefaultFieldName(command.EntityType);
-                    var queryFields = SQLiteFactory.GetQueryFields(command.Query, command.EntityType, true);
-                    string innerFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, false));
-                    string outputFormatedField = string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, queryFields, true));
-                    string queryScript = $"SELECT {innerFormatedField} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
-                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {SQLiteFactory.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{SQLiteFactory.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({SQLiteFactory.WrapKeyword(defaultFieldName)}) FROM {SQLiteFactory.PagingTableName}) AS {DataManager.PagingTotalCountFieldName},{outputFormatedField} FROM {SQLiteFactory.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.OrderString) ? $"{translator.ObjectPetName}.{SQLiteFactory.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.OrderString}")} {limitString}";
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+                    string defaultFieldName = SQLiteManager.GetDefaultFieldName(command.EntityType);
+                    var queryFields = SQLiteManager.GetQueryFields(command.Query, command.EntityType, true);
+                    string innerFormatedField = string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, queryFields, false));
+                    string outputFormatedField = string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, queryFields, true));
+                    string queryScript = $"SELECT {innerFormatedField} FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}";
+                    cmdText = $"{(string.IsNullOrWhiteSpace(tranResult.PreScript) ? $"WITH {SQLiteManager.PagingTableName} AS ({queryScript})" : $"{tranResult.PreScript},{SQLiteManager.PagingTableName} AS ({queryScript})")}SELECT (SELECT COUNT({SQLiteManager.WrapKeyword(defaultFieldName)}) FROM {SQLiteManager.PagingTableName}) AS {DataManager.PagingTotalCountFieldName},{outputFormatedField} FROM {SQLiteManager.PagingTableName} AS {translator.ObjectPetName} ORDER BY {(string.IsNullOrWhiteSpace(tranResult.SortString) ? $"{translator.ObjectPetName}.{SQLiteManager.WrapKeyword(defaultFieldName)} DESC" : $"{tranResult.SortString}")} {limitString}";
                     break;
             }
 
@@ -599,44 +612,43 @@ namespace EZNEW.Data.SQLite
 
             #region parameter
 
-            var parameters = SQLiteFactory.ConvertCmdParameters(SQLiteFactory.ParseParameters(tranResult.Parameters));
+            var parameters = SQLiteManager.ConvertCmdParameters(SQLiteManager.ConvertParameter(tranResult.Parameters));
 
             #endregion
 
             //Trace log
-            SQLiteFactory.LogScript(cmdText, tranResult.Parameters);
+            SQLiteManager.LogScript(cmdText, tranResult.Parameters);
 
-            using (var conn = SQLiteFactory.GetConnection(server))
+            using (var conn = SQLiteManager.GetConnection(server))
             {
-                var tran = SQLiteFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = SQLiteManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.QueryAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query whether the data exists or not
+        /// Indecats whether exists data
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether data has existed</returns>
-        public bool Query(DatabaseServer server, ICommand command)
+        /// <returns>Return whether exists data</returns>
+        public bool Exists(DatabaseServer server, ICommand command)
         {
-            return QueryAsync(server, command).Result;
+            return ExistsAsync(server, command).Result;
         }
 
         /// <summary>
-        /// Query whether the data exists or not
+        /// Indecats whether exists data
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return whether data has existed</returns>
-        public async Task<bool> QueryAsync(DatabaseServer server, ICommand command)
+        /// <returns>Return whether exists data</returns>
+        public async Task<bool> ExistsAsync(DatabaseServer server, ICommand command)
         {
-            var translator = SQLiteFactory.GetQueryTranslator(server);
+            #region query translation
 
-            #region query translate
-
+            var translator = SQLiteManager.GetQueryTranslator(DataAccessContext.Create(server, command));
             command.Query.ClearQueryFields();
             var queryFields = EntityManager.GetPrimaryKeys(command.EntityType).ToArray();
             if (queryFields.IsNullOrEmpty())
@@ -653,23 +665,23 @@ namespace EZNEW.Data.SQLite
 
             #region script
 
-            string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
-            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
+            string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
+            string cmdText = $"{preScript}SELECT EXISTS(SELECT {string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {conditionString} {tranResult.CombineScript})";
 
             #endregion
 
             #region parameter
 
-            var parameters = SQLiteFactory.ConvertCmdParameters(SQLiteFactory.ParseParameters(tranResult.Parameters));
+            var parameters = SQLiteManager.ConvertCmdParameters(SQLiteManager.ConvertParameter(tranResult.Parameters));
 
             #endregion
 
             //Trace log
-            SQLiteFactory.LogScript(cmdText, tranResult.Parameters);
+            SQLiteManager.LogScript(cmdText, tranResult.Parameters);
 
-            using (var conn = SQLiteFactory.GetConnection(server))
+            using (var conn = SQLiteManager.GetConnection(server))
             {
-                var tran = SQLiteFactory.GetQueryTransaction(conn, command.Query);
+                var tran = SQLiteManager.GetQueryTransaction(conn, command.Query);
                 var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 int value = await conn.ExecuteScalarAsync<int>(cmdDefinition).ConfigureAwait(false);
                 return value > 0;
@@ -677,79 +689,79 @@ namespace EZNEW.Data.SQLite
         }
 
         /// <summary>
-        /// Query single value
+        /// Query aggregation value
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the data</returns>
+        /// <returns>Return aggregation value</returns>
         public T AggregateValue<T>(DatabaseServer server, ICommand command)
         {
             return AggregateValueAsync<T>(server, command).Result;
         }
 
         /// <summary>
-        /// Query single value
+        /// Query aggregation value
         /// </summary>
         /// <typeparam name="T">Data type</typeparam>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
-        /// <returns>Return the data</returns>
+        /// <returns>Return aggregation value</returns>
         public async Task<T> AggregateValueAsync<T>(DatabaseServer server, ICommand command)
         {
             if (command.Query == null)
             {
-                throw new EZNEWException("ICommand.Query is null");
+                throw new EZNEWException($"{nameof(ICommand.Query)} is null");
             }
 
-            #region query translate
+            #region query translation
 
-            bool queryObject = command.Query.QueryType == QueryCommandType.QueryObject;
-            string funcName = SQLiteFactory.GetAggregateFunctionName(command.OperateType);
+            bool queryObject = command.Query.ExecutionMode == QueryExecutionMode.QueryObject;
+            string funcName = SQLiteManager.GetAggregateFunctionName(command.OperationType);
             EntityField defaultField = null;
             if (queryObject)
             {
                 if (string.IsNullOrWhiteSpace(funcName))
                 {
-                    throw new NotSupportedException($"Not support {command.OperateType}");
+                    throw new NotSupportedException($"Not support {command.OperationType}");
                 }
-                if (SQLiteFactory.AggregateOperateMustNeedField(command.OperateType))
+                if (SQLiteManager.CheckAggregationOperationMustNeedField(command.OperationType))
                 {
                     if (command.Query.QueryFields.IsNullOrEmpty())
                     {
                         throw new EZNEWException($"You must specify the field to perform for the {funcName} operation");
                     }
-                    defaultField = DataManager.GetField(DatabaseServerType.SQLite, command.EntityType, command.Query.QueryFields.First());
+                    defaultField = DataManager.GetField(CurrentDatabaseServerType, command.EntityType, command.Query.QueryFields.First());
                 }
                 else
                 {
-                    defaultField = DataManager.GetDefaultField(DatabaseServerType.SQLite, command.EntityType);
+                    defaultField = DataManager.GetDefaultField(CurrentDatabaseServerType, command.EntityType);
                 }
                 //combine fields
-                if (!command.Query.CombineItems.IsNullOrEmpty())
+                if (!command.Query.Combines.IsNullOrEmpty())
                 {
                     var combineKeys = EntityManager.GetPrimaryKeys(command.EntityType).Union(new string[1] { defaultField.PropertyName }).ToArray();
                     command.Query.ClearQueryFields();
-                    foreach (var combineItem in command.Query.CombineItems)
+                    foreach (var combineItem in command.Query.Combines)
                     {
-                        combineItem.CombineQuery.ClearQueryFields();
+                        combineItem.Query.ClearQueryFields();
                         if (combineKeys.IsNullOrEmpty())
                         {
-                            combineItem.CombineQuery.ClearNotQueryFields();
+                            combineItem.Query.ClearNotQueryFields();
                             command.Query.ClearNotQueryFields();
                         }
                         else
                         {
                             command.Query.AddQueryFields(combineKeys);
-                            if (combineItem.CombineType == CombineType.Union || combineItem.CombineType == CombineType.UnionAll)
+                            if (combineItem.Type == CombineType.Union || combineItem.Type == CombineType.UnionAll)
                             {
-                                combineItem.CombineQuery.AddQueryFields(combineKeys);
+                                combineItem.Query.AddQueryFields(combineKeys);
                             }
                         }
                     }
                 }
             }
-            IQueryTranslator translator = SQLiteFactory.GetQueryTranslator(server);
+            IQueryTranslator translator = SQLiteManager.GetQueryTranslator(DataAccessContext.Create(server, command));
             var tranResult = translator.Translate(command.Query);
 
             #endregion
@@ -758,17 +770,17 @@ namespace EZNEW.Data.SQLite
 
             string cmdText;
             string joinScript = tranResult.AllowJoin ? tranResult.JoinScript : string.Empty;
-            switch (command.Query.QueryType)
+            switch (command.Query.ExecutionMode)
             {
-                case QueryCommandType.Text:
+                case QueryExecutionMode.Text:
                     cmdText = tranResult.ConditionString;
                     break;
-                case QueryCommandType.QueryObject:
+                case QueryExecutionMode.QueryObject:
                 default:
-                    string objectName = DataManager.GetEntityObjectName(DatabaseServerType.SQLite, command.EntityType, command.ObjectName);
+                    string objectName = translator.DataAccessContext.GetCommandEntityObjectName(command);
                     cmdText = string.IsNullOrWhiteSpace(tranResult.CombineScript)
-                        ? $"{tranResult.PreScript}SELECT {funcName}({SQLiteFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
-                        : $"{tranResult.PreScript}SELECT {funcName}({SQLiteFactory.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", SQLiteFactory.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {SQLiteFactory.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
+                        ? $"{tranResult.PreScript}SELECT {funcName}({SQLiteManager.FormatField(translator.ObjectPetName, defaultField, false)}) FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")}"
+                        : $"{tranResult.PreScript}SELECT {funcName}({SQLiteManager.FormatField(translator.ObjectPetName, defaultField, false)}) FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(translator.ObjectPetName, command.Query, command.EntityType, true, false))} FROM {SQLiteManager.WrapKeyword(objectName)} AS {translator.ObjectPetName} {joinScript} {(string.IsNullOrWhiteSpace(tranResult.ConditionString) ? string.Empty : $"WHERE {tranResult.ConditionString}")} {tranResult.CombineScript}) AS {translator.ObjectPetName}";
                     break;
             }
 
@@ -776,23 +788,23 @@ namespace EZNEW.Data.SQLite
 
             #region parameter
 
-            var parameters = SQLiteFactory.ConvertCmdParameters(SQLiteFactory.ParseParameters(tranResult.Parameters));
+            var parameters = SQLiteManager.ConvertCmdParameters(SQLiteManager.ConvertParameter(tranResult.Parameters));
 
             #endregion
 
             //Trace log
-            SQLiteFactory.LogScript(cmdText, tranResult.Parameters);
+            SQLiteManager.LogScript(cmdText, tranResult.Parameters);
 
-            using (var conn = SQLiteFactory.GetConnection(server))
+            using (var conn = SQLiteManager.GetConnection(server))
             {
-                var tran = SQLiteFactory.GetQueryTransaction(conn, command.Query);
-                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = SQLiteManager.GetQueryTransaction(conn, command.Query);
+                var cmdDefinition = new CommandDefinition(cmdText, parameters, transaction: tran, commandType: SQLiteManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 return await conn.ExecuteScalarAsync<T>(cmdDefinition).ConfigureAwait(false);
             }
         }
 
         /// <summary>
-        /// Query data
+        /// Query data set
         /// </summary>
         /// <param name="server">Database server</param>
         /// <param name="command">Command</param>
@@ -800,12 +812,12 @@ namespace EZNEW.Data.SQLite
         public async Task<DataSet> QueryMultipleAsync(DatabaseServer server, ICommand command)
         {
             //Trace log
-            SQLiteFactory.LogScript(command.CommandText, command.Parameters);
-            using (var conn = SQLiteFactory.GetConnection(server))
+            SQLiteManager.LogScript(command.Text, command.Parameters);
+            using (var conn = SQLiteManager.GetConnection(server))
             {
-                var tran = SQLiteFactory.GetQueryTransaction(conn, command.Query);
-                DynamicParameters parameters = SQLiteFactory.ConvertCmdParameters(SQLiteFactory.ParseParameters(command.Parameters));
-                var cmdDefinition = new CommandDefinition(command.CommandText, parameters, transaction: tran, commandType: SQLiteFactory.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
+                var tran = SQLiteManager.GetQueryTransaction(conn, command.Query);
+                DynamicParameters parameters = SQLiteManager.ConvertCmdParameters(SQLiteManager.ConvertParameter(command.Parameters));
+                var cmdDefinition = new CommandDefinition(command.Text, parameters, transaction: tran, commandType: SQLiteManager.GetCommandType(command as DefaultCommand), cancellationToken: command.Query?.GetCancellationToken() ?? default);
                 using (var reader = await conn.ExecuteReaderAsync(cmdDefinition).ConfigureAwait(false))
                 {
                     DataSet dataSet = new DataSet();
@@ -830,7 +842,7 @@ namespace EZNEW.Data.SQLite
         /// <param name="server">Database server</param>
         /// <param name="dataTable">Data table</param>
         /// <param name="bulkInsertOptions">Insert options</param>
-        public void BulkInsert(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        public void BulkInsert(DatabaseServer server, DataTable dataTable, IBulkInsertionOptions bulkInsertOptions = null)
         {
             BulkInsertAsync(server, dataTable).Wait();
         }
@@ -841,7 +853,7 @@ namespace EZNEW.Data.SQLite
         /// <param name="server">Database server</param>
         /// <param name="dataTable">Data table</param>
         /// <param name="bulkInsertOptions">Insert options</param>
-        public async Task BulkInsertAsync(DatabaseServer server, DataTable dataTable, IBulkInsertOptions bulkInsertOptions = null)
+        public async Task BulkInsertAsync(DatabaseServer server, DataTable dataTable, IBulkInsertionOptions bulkInsertOptions = null)
         {
             if (server == null)
             {
@@ -857,7 +869,7 @@ namespace EZNEW.Data.SQLite
                 {
                     conn.Open();
                     SqliteTransaction tran = null;
-                    if (bulkInsertOptions is SQLiteBulkInsertOptions sqliteBulkInsertOptions && sqliteBulkInsertOptions != null)
+                    if (bulkInsertOptions is SQLiteBulkInsertionOptions sqliteBulkInsertOptions && sqliteBulkInsertOptions != null)
                     {
                         if (sqliteBulkInsertOptions.UseTransaction)
                         {
@@ -875,14 +887,14 @@ namespace EZNEW.Data.SQLite
                     {
                         columns.Add(col.ColumnName);
                         SqliteParameter parameter = command.CreateParameter();
-                        parameter.ParameterName = $"{SQLiteFactory.ParameterPrefix}{col.ColumnName}";
+                        parameter.ParameterName = $"{SQLiteManager.ParameterPrefix}{col.ColumnName}";
                         parameters[col.ColumnName] = parameter;
                         command.Parameters.Add(parameter);
                     }
 
                     command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-({string.Join(",", columns.Select(c => $"{SQLiteFactory.KeywordPrefix}{c}{SQLiteFactory.KeywordSuffix}"))}) 
-VALUES ({string.Join(",", columns.Select(c => $"{SQLiteFactory.ParameterPrefix}{c}"))})";
+({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
+VALUES ({string.Join(",", columns.Select(c => $"{SQLiteManager.ParameterPrefix}{c}"))})";
 
                     foreach (DataRow row in dataTable.Rows)
                     {

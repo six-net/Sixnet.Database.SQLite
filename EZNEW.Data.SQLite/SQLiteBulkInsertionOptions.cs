@@ -4,10 +4,13 @@ using System.Text;
 
 namespace EZNEW.Data.SQLite
 {
-    public class SQLiteBulkInsertOptions : IBulkInsertOptions
+    /// <summary>
+    /// Defines sqlite bulk insertion options
+    /// </summary>
+    public class SQLiteBulkInsertionOptions : IBulkInsertionOptions
     {
         /// <summary>
-        /// Whether use transaction
+        /// Indicates whether use transaction
         /// </summary>
         public bool UseTransaction { get; set; }
     }
