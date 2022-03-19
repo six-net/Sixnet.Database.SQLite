@@ -138,7 +138,7 @@ namespace EZNEW.Data.SQLite
                             recurveTableName = conditionResult.RecurveObjectName;
                             recurveTablePetName = conditionResult.RecurvePetName;
                         }
-                        conditionBuilder.Append($" {(index > 0 ? condition.ConnectionOperator.ToString() : string.Empty)} {conditionResult.ConditionString}");
+                        conditionBuilder.Append($" {(index > 0 ? condition.Connector.ToString().ToUpper() : string.Empty)} {conditionResult.ConditionString}");
                         index++;
                     }
                 }
@@ -193,22 +193,29 @@ namespace EZNEW.Data.SQLite
                 {
                     foreach (var joinEntry in query.Joins)
                     {
-                        if (joinEntry == null || joinEntry.JoinQuery == null)
+                        if (joinEntry == null || joinEntry.JoinObjectFilter == null)
                         {
                             continue;
                         }
-                        if (joinEntry.JoinQuery.GetEntityType() == null)
+                        if (joinEntry.JoinObjectFilter.GetEntityType() == null)
                         {
                             throw new EZNEWException("IQuery object must set entity type if use in join operation");
                         }
                         string joinObjectPetName = GetNewSubObjectPetName();
-                        var joinQueryResult = ExecuteTranslation(joinEntry.JoinQuery, QueryLocation.Join, parameters, joinObjectPetName, true);
+                        var joinQueryResult = ExecuteTranslation(joinEntry.JoinObjectFilter, QueryLocation.Join, parameters, joinObjectPetName, true);
                         if (string.IsNullOrWhiteSpace(joinQueryResult.CombineScript))
                         {
-                            var joinConnection = GetJoinCondition(query, joinEntry, objectName, joinObjectPetName);
+                            var joinResult = GetJoinCondition(query, joinEntry, parameters, objectName, joinObjectPetName);
+                            if (!joinResult.WithScripts.IsNullOrEmpty())
+                            {
+                                withScripts.AddRange(joinResult.WithScripts);
+                                recurveTableName = joinResult.RecurveObjectName;
+                                recurveTablePetName = joinResult.RecurvePetName;
+                            }
+                            var joinConnection = joinResult.ConditionString;
                             if (!string.IsNullOrWhiteSpace(joinQueryResult.ConditionString))
                             {
-                                if (joinQueryResult.AllowJoin && PositionJoinConditionToConnection(joinEntry.JoinType))
+                                if (joinQueryResult.AllowJoin && PositionJoinConditionToConnection(joinEntry.Type))
                                 {
                                     joinConnection += $"{(string.IsNullOrWhiteSpace(joinConnection) ? " ON" : " AND ")}{joinQueryResult.ConditionString}";
                                 }
@@ -221,10 +228,10 @@ namespace EZNEW.Data.SQLite
                             {
                                 conditionBuilder.Append($"{(conditionBuilder.Length == 0 ? string.Empty : " AND ")}{joinQueryResult.JoinExtraConditionString}");
                             }
-                            joinBuilder.Append($" {GetJoinOperator(joinEntry.JoinType)} {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinQuery))} AS {joinObjectPetName}{joinConnection}");
-                            if (joinEntry.ExtraQuery != null)
+                            joinBuilder.Append($" {GetJoinOperator(joinEntry.Type)} {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinObjectFilter))} AS {joinObjectPetName}{joinConnection}");
+                            if (joinEntry.JoinObjectExtraFilter != null)
                             {
-                                var extraQueryResult = ExecuteTranslation(joinEntry.ExtraQuery, QueryLocation.Join, parameters, joinObjectPetName, true);
+                                var extraQueryResult = ExecuteTranslation(joinEntry.JoinObjectExtraFilter, QueryLocation.Join, parameters, joinObjectPetName, true);
                                 if (!string.IsNullOrWhiteSpace(extraQueryResult.ConditionString))
                                 {
                                     joinExtraCondition.Append(joinExtraCondition.Length > 0 ? $" AND {extraQueryResult.ConditionString}" : extraQueryResult.ConditionString);
@@ -238,8 +245,15 @@ namespace EZNEW.Data.SQLite
                         else
                         {
                             var combineJoinObjName = GetNewSubObjectPetName();
-                            var joinConnection = GetJoinCondition(query, joinEntry, objectName, combineJoinObjName);
-                            joinBuilder.Append($" {GetJoinOperator(joinEntry.JoinType)} (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(joinObjectPetName, joinEntry.JoinQuery, joinEntry.JoinQuery.GetEntityType(), false, false))} FROM {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinQuery))} AS {joinObjectPetName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
+                            var joinResult = GetJoinCondition(query, joinEntry, parameters, objectName, combineJoinObjName);
+                            if (!joinResult.WithScripts.IsNullOrEmpty())
+                            {
+                                withScripts.AddRange(joinResult.WithScripts);
+                                recurveTableName = joinResult.RecurveObjectName;
+                                recurveTablePetName = joinResult.RecurvePetName;
+                            }
+                            var joinConnection = joinResult.ConditionString;
+                            joinBuilder.Append($" {GetJoinOperator(joinEntry.Type)} (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(joinObjectPetName, joinEntry.JoinObjectFilter, joinEntry.JoinObjectFilter.GetEntityType(), false, false))} FROM {SQLiteManager.WrapKeyword(DataAccessContext.GetJoinEntityObjectName(joinEntry.JoinObjectFilter))} AS {joinObjectPetName} {(joinQueryResult.AllowJoin ? joinQueryResult.JoinScript : string.Empty)} {(string.IsNullOrWhiteSpace(joinQueryResult.ConditionString) ? string.Empty : "WHERE " + joinQueryResult.ConditionString)} {joinQueryResult.CombineScript}) AS {combineJoinObjName}{joinConnection}");
                         }
                         if (!joinQueryResult.WithScripts.IsNullOrEmpty())
                         {
@@ -345,7 +359,7 @@ namespace EZNEW.Data.SQLite
                         recurveTablePetName = subGroupResult.RecurvePetName;
                         groupWithScripts.AddRange(subGroupResult.WithScripts);
                     }
-                    subCondition.Append($" {(index > 0 ? subQueryItem.ConnectionOperator.ToString() : string.Empty)} {subGroupResult.ConditionString}");
+                    subCondition.Append($" {(index > 0 ? subQueryItem.Connector.ToString().ToUpper() : string.Empty)} {subGroupResult.ConditionString}");
                     index++;
                 }
                 var groupResult = QueryTranslationResult.Create(subCondition.Append(")").ToString());
@@ -378,44 +392,11 @@ namespace EZNEW.Data.SQLite
             {
                 return QueryTranslationResult.Create($"{criterionFieldName} {sqlOperator}");
             }
-            string parameterName = GetNewParameterName(criterion.Name);
             if (criterion.Value is IQuery subquery)
             {
-                var subqueryObjectName = DataAccessContext.GetSubqueryEntityObjectName(subquery);
-                if (subquery.QueryFields.IsNullOrEmpty())
-                {
-                    throw new EZNEWException($"The {subqueryObjectName} query object that is a subquery must have at least one query field set");
-                }
-                var subqueryField = DataManager.GetField(DatabaseServerType, subquery, subquery.QueryFields.First());
-                string subqueryObjectPetName = GetNewSubObjectPetName();
-                var subqueryLimitResult = GetSubqueryLimitCondition(sqlOperator, subquery.QuerySize);
-                string topString = subqueryLimitResult.Item2;
-                var userSort = !string.IsNullOrWhiteSpace(topString);
-                var subqueryTranslationResult = ExecuteTranslation(subquery, QueryLocation.Subuery, parameters, subqueryObjectPetName, userSort);
-                string subqueryConditionString = string.IsNullOrWhiteSpace(subqueryTranslationResult.ConditionString) ? string.Empty : $"WHERE {subqueryTranslationResult.ConditionString}";
-                string subquerySortString = string.IsNullOrWhiteSpace(subqueryTranslationResult.SortString) ? string.Empty : $"ORDER BY {subqueryTranslationResult.SortString}";
-                string subqueryCondition;
-                if (subqueryLimitResult.Item1)
-                {
-                    subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
-                        ? $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString}) AS S{subqueryObjectPetName})"
-                        : $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString}) AS S{subqueryObjectPetName})";
-                }
-                else
-                {
-                    subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
-                        ? $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString})"
-                        : $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString})";
-                }
-                var subqueryResult = QueryTranslationResult.Create(subqueryCondition);
-                if (!subqueryTranslationResult.WithScripts.IsNullOrEmpty())
-                {
-                    subqueryResult.WithScripts = new List<string>(subqueryTranslationResult.WithScripts);
-                    subqueryResult.RecurveObjectName = subqueryTranslationResult.RecurveObjectName;
-                    subqueryResult.RecurvePetName = subqueryTranslationResult.RecurvePetName;
-                }
-                return subqueryResult;
+                return TranslateSubquery(subquery, parameters, criterionFieldName, sqlOperator);
             }
+            string parameterName = GetNewParameterName(criterion.Field.Name);
             var needWrapParameter = NeedWrapParameter(criterion.Operator);
             if (needWrapParameter)
             {
@@ -437,6 +418,184 @@ namespace EZNEW.Data.SQLite
                 var criterionCondition = $"{criterionFieldName} {sqlOperator} {SQLiteManager.ParameterPrefix}{parameterName}";
                 return QueryTranslationResult.Create(criterionCondition);
             }
+        }
+
+        /// <summary>
+        /// Translate subquery
+        /// </summary>
+        /// <param name="subquery">Subquery</param>
+        /// <param name="parameters">parameters</param>
+        /// <param name="criterionFieldName">Field name</param>
+        /// <param name="sqlOperator">Sql operator</param>
+        /// <param name="objectName">Object name</param>
+        /// <returns></returns>
+        /// <exception cref="EZNEWException"></exception>
+        QueryTranslationResult TranslateSubquery(IQuery subquery, CommandParameters parameters, string criterionFieldName, string sqlOperator)
+        {
+            var subqueryObjectName = DataAccessContext.GetSubqueryEntityObjectName(subquery);
+            if (subquery.QueryFields.IsNullOrEmpty())
+            {
+                throw new EZNEWException($"The {subqueryObjectName} query object that is a subquery must have at least one query field set");
+            }
+            var subqueryField = DataManager.GetField(DatabaseServerType, subquery, subquery.QueryFields.First());
+            string subqueryObjectPetName = GetNewSubObjectPetName();
+            var subqueryLimitResult = GetSubqueryLimitCondition(sqlOperator, subquery.QuerySize);
+            string topString = subqueryLimitResult.Item2;
+            var userSort = !string.IsNullOrWhiteSpace(topString);
+            var subqueryTranslationResult = ExecuteTranslation(subquery, QueryLocation.Subuery, parameters, subqueryObjectPetName, userSort);
+            string subqueryConditionString = string.IsNullOrWhiteSpace(subqueryTranslationResult.ConditionString) ? string.Empty : $"WHERE {subqueryTranslationResult.ConditionString}";
+            string subquerySortString = string.IsNullOrWhiteSpace(subqueryTranslationResult.SortString) ? string.Empty : $"ORDER BY {subqueryTranslationResult.SortString}";
+            string subqueryCondition;
+            if (subqueryLimitResult.Item1)
+            {
+                subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
+                    ? $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString}) AS S{subqueryObjectPetName})"
+                    : $"{criterionFieldName} {sqlOperator} (SELECT {SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString}) AS S{subqueryObjectPetName})";
+            }
+            else
+            {
+                subqueryCondition = string.IsNullOrWhiteSpace(subqueryTranslationResult.CombineScript)
+                    ? $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subquerySortString} {topString})"
+                    : $"{criterionFieldName} {sqlOperator} (SELECT {subqueryObjectPetName}.{SQLiteManager.WrapKeyword(subqueryField.FieldName)} FROM (SELECT {string.Join(",", SQLiteManager.FormatQueryFields(subqueryObjectPetName, subquery, subquery.GetEntityType(), true, false))} FROM {SQLiteManager.WrapKeyword(subqueryObjectName)} AS {subqueryObjectPetName} {(subqueryTranslationResult.AllowJoin ? subqueryTranslationResult.JoinScript : string.Empty)} {subqueryConditionString} {subqueryTranslationResult.CombineScript}) AS {subqueryObjectPetName} {subquerySortString} {topString})";
+            }
+            var subqueryResult = QueryTranslationResult.Create(subqueryCondition);
+            if (!subqueryTranslationResult.WithScripts.IsNullOrEmpty())
+            {
+                subqueryResult.WithScripts = new List<string>(subqueryTranslationResult.WithScripts);
+                subqueryResult.RecurveObjectName = subqueryTranslationResult.RecurveObjectName;
+                subqueryResult.RecurvePetName = subqueryTranslationResult.RecurvePetName;
+            }
+            return subqueryResult;
+        }
+
+        /// <summary>
+        /// Get join condition
+        /// </summary>
+        /// <param name="sourceQuery">Source query</param>
+        /// <param name="joinEntry">Join entry</param>
+        /// <param name="sourceObjectPetName">Source object pet name</param>
+        /// <param name="targetObjectPetName">Target object pet name</param>
+        /// <returns>Return join condition</returns>
+        QueryTranslationResult GetJoinCondition(IQuery sourceQuery, JoinEntry joinEntry, CommandParameters parameters, string sourceObjectPetName, string targetObjectPetName)
+        {
+            string GetJoinCriteriaConnector(int criteriaIndex, CriterionConnector connector)
+            {
+                if (criteriaIndex < 1)
+                {
+                    return string.Empty;
+                }
+                return $" {connector.ToString().ToUpper()} ";
+            }
+
+            if (joinEntry.Type == JoinType.CrossJoin)
+            {
+                return QueryTranslationResult.Empty;
+            }
+            var joinCriteria = joinEntry.JoinCriteria;
+            var sourceEntityType = sourceQuery.GetEntityType();
+            var targetEntityType = joinEntry.JoinObjectFilter.GetEntityType();
+            if (joinCriteria.IsNullOrEmpty())
+            {
+                if (sourceEntityType == targetEntityType)
+                {
+                    var primaryKeys = EntityManager.GetPrimaryKeys(sourceEntityType);
+                    if (primaryKeys.IsNullOrEmpty())
+                    {
+                        return QueryTranslationResult.Empty;
+                    }
+                    joinCriteria = primaryKeys.Select(pk =>
+                    {
+                        var pkJoinField = new JoinField()
+                        {
+                            Name = pk,
+                            Type = JoinFieldType.Field
+                        };
+                        return RegularJoinCriterion.Create(FieldInfo.Create(pk), CriterionOperator.Equal, FieldInfo.Create(pk)) as IJoinCriterion;
+                    }).ToList();
+                }
+                else
+                {
+                    var joinFields = EntityManager.GetRelationFields(sourceEntityType, targetEntityType);
+                    joinCriteria = joinFields?.Select(jf =>
+                    {
+                        return RegularJoinCriterion.Create(FieldInfo.Create(jf.Key), CriterionOperator.Equal, FieldInfo.Create(jf.Value)) as IJoinCriterion;
+                    }).ToList();
+                }
+                if (joinCriteria.IsNullOrEmpty())
+                {
+                    throw new EZNEWException($"Not set relation key between {sourceEntityType.FullName} and {targetEntityType.FullName}");
+                }
+            }
+            List<string> joinList = new List<string>();
+            List<string> withScripts = new List<string>();
+            string recurveTableName = string.Empty;
+            string recurveTablePetName = string.Empty;
+            int joinCriterionIndex = 0;
+            foreach (var criterion in joinCriteria)
+            {
+                if (criterion is RegularJoinCriterion regularJoinCriterion)
+                {
+                    string criterionConnector = GetJoinCriteriaConnector(joinCriterionIndex++, criterion.Connector);
+                    string sqlOperator = GetOperator(regularJoinCriterion.Operator);
+                    if (regularJoinCriterion.Value is FieldInfo joinField)
+                    {
+                        string leftFieldName = string.Empty;
+                        string rightFieldName = string.Empty;
+                        if (regularJoinCriterion.IsRightCriterion)
+                        {
+                            leftFieldName = ConvertFieldName(joinEntry.JoinObjectFilter, targetObjectPetName, joinField);
+                            rightFieldName = ConvertFieldName(sourceQuery, sourceObjectPetName, regularJoinCriterion.Field);
+                        }
+                        else
+                        {
+                            rightFieldName = ConvertFieldName(joinEntry.JoinObjectFilter, targetObjectPetName, joinField);
+                            leftFieldName = ConvertFieldName(sourceQuery, sourceObjectPetName, regularJoinCriterion.Field);
+                        }
+                        joinList.Add($"{criterionConnector}{leftFieldName} {sqlOperator} {rightFieldName}");
+                    }
+                    else if (regularJoinCriterion.Value is IQuery valueQuery)
+                    {
+                        string joinCritrionObjectPetName = criterion.IsRightCriterion ? targetObjectPetName : sourceObjectPetName;
+                        string sourceFieldName = ConvertFieldName(sourceQuery, joinCritrionObjectPetName, regularJoinCriterion.Field);
+                        var subqueryTranResult = TranslateSubquery(valueQuery, parameters, sourceFieldName, sqlOperator);
+                        joinList.Add($"{criterionConnector}{subqueryTranResult.ConditionString}");
+                        if (!subqueryTranResult.WithScripts.IsNullOrEmpty())
+                        {
+                            withScripts.AddRange(subqueryTranResult.WithScripts);
+                            recurveTableName = subqueryTranResult.RecurveObjectName;
+                            recurveTablePetName = subqueryTranResult.RecurvePetName;
+                        }
+                    }
+                    else
+                    {
+                        string joinFieldName = ConvertFieldName(regularJoinCriterion.IsRightCriterion ? joinEntry.JoinObjectFilter : sourceQuery, regularJoinCriterion.IsRightCriterion ? targetObjectPetName : sourceObjectPetName, regularJoinCriterion.Field);
+                        string parameterName = GetNewParameterName(regularJoinCriterion.Field?.Name);
+                        parameters.Add(parameterName, FormatCriterionValue(regularJoinCriterion.Operator, regularJoinCriterion.Value));
+                        joinList.Add($"{criterionConnector}{joinFieldName} {sqlOperator} {SQLiteManager.ParameterPrefix}{parameterName}");
+                    }
+
+                }
+                else if (criterion is QueryJoinCriterion queryJoinCriterion)
+                {
+                    var queryTranResult = ExecuteTranslation(queryJoinCriterion.Criteria, QueryLocation.JoinConnection, parameters, queryJoinCriterion.IsRightCriterion ? targetObjectPetName : sourceObjectPetName, false);
+                    if (!string.IsNullOrWhiteSpace(queryTranResult.ConditionString))
+                    {
+                        string criterionConnector = GetJoinCriteriaConnector(joinCriterionIndex++, criterion.Connector);
+                        joinList.Add($"{criterionConnector}({queryTranResult.ConditionString})");
+                        if (!queryTranResult.WithScripts.IsNullOrEmpty())
+                        {
+                            withScripts.AddRange(queryTranResult.WithScripts);
+                            recurveTableName = queryTranResult.RecurveObjectName;
+                            recurveTablePetName = queryTranResult.RecurvePetName;
+                        }
+                    }
+                }
+            }
+            var joinResult = QueryTranslationResult.Create(joinList.IsNullOrEmpty() ? string.Empty : " ON " + string.Join("", joinList));
+            joinResult.WithScripts = withScripts;
+            joinResult.RecurveObjectName = recurveTableName;
+            joinResult.RecurvePetName = recurveTablePetName;
+            return joinResult;
         }
 
         /// <summary>
@@ -547,7 +706,7 @@ namespace EZNEW.Data.SQLite
         /// <returns></returns>
         string ConvertCriterionFieldName(IQuery query, string objectName, Criterion criterion)
         {
-            return ConvertFieldName(query, objectName, criterion.Name, criterion.Options?.FieldConversionOptions);
+            return ConvertFieldName(query, objectName, criterion.Field);
         }
 
         /// <summary>
@@ -559,28 +718,28 @@ namespace EZNEW.Data.SQLite
         /// <returns></returns>
         string ConvertSortFieldName(IQuery query, string objectName, SortEntry sortEntry)
         {
-            return ConvertFieldName(query, objectName, sortEntry.Name, sortEntry.Options?.FieldConversionOptions);
+            return ConvertFieldName(query, objectName, sortEntry.Field);
         }
 
         /// <summary>
         /// Convert field name
         /// </summary>
         /// <param name="objectName">Object name</param>
-        /// <param name="fieldName">Field name</param>
+        /// <param name="fieldInfo">Field info</param>
         /// <param name="fieldConversionOptions">Field conversion options</param>
         /// <returns>Return new field name</returns>
-        string ConvertFieldName(IQuery query, string objectName, string fieldName, FieldConversionOptions fieldConversionOptions)
+        string ConvertFieldName(IQuery query, string objectName, FieldInfo fieldInfo)
         {
-            var field = DataManager.GetField(DatabaseServerType, query, fieldName);
-            fieldName = field.FieldName;
-            if (fieldConversionOptions == null)
+            var field = DataManager.GetField(DatabaseServerType, query, fieldInfo?.Name);
+            string fieldName = field.FieldName;
+            if (!fieldInfo.HasConversion)
             {
                 return $"{objectName}.{SQLiteManager.WrapKeyword(fieldName)}";
             }
-            var fieldConversionResult = SQLiteManager.ConvertField(DatabaseServer, fieldConversionOptions, objectName, fieldName);
+            var fieldConversionResult = SQLiteManager.ConvertField(DatabaseServer, fieldInfo.ConversionOptions, objectName, fieldName);
             if (string.IsNullOrWhiteSpace(fieldConversionResult?.NewFieldName))
             {
-                throw new EZNEWException($"{DatabaseServerType}-{fieldConversionOptions.ConversionName}:new field name is null or empty.");
+                throw new EZNEWException($"{DatabaseServerType}-{fieldInfo.ConversionOptions.ConversionName}:new field name is null or empty.");
             }
             return fieldConversionResult.NewFieldName;
         }
@@ -613,95 +772,6 @@ namespace EZNEW.Data.SQLite
                 default:
                     return true;
             }
-        }
-
-        /// <summary>
-        /// Get join condition
-        /// </summary>
-        /// <param name="sourceQuery">Source query</param>
-        /// <param name="joinEntry">Join entry</param>
-        /// <param name="sourceObjectPetName">Source object pet name</param>
-        /// <param name="targetObjectPetName">Target object pet name</param>
-        /// <returns>Return join condition</returns>
-        string GetJoinCondition(IQuery sourceQuery, JoinEntry joinEntry, string sourceObjectPetName, string targetObjectPetName)
-        {
-            if (joinEntry.JoinType == JoinType.CrossJoin)
-            {
-                return string.Empty;
-            }
-            var joinFields = joinEntry?.JoinFields.Where(r => !string.IsNullOrWhiteSpace(r.Key) && !string.IsNullOrWhiteSpace(r.Value));
-            var sourceEntityType = sourceQuery.GetEntityType();
-            var targetEntityType = joinEntry.JoinQuery.GetEntityType();
-            bool useValueAsSource = false;
-            if (joinFields.IsNullOrEmpty())
-            {
-                if (sourceEntityType == targetEntityType)
-                {
-                    var primaryKeys = EntityManager.GetPrimaryKeys(sourceEntityType);
-                    if (primaryKeys.IsNullOrEmpty())
-                    {
-                        return string.Empty;
-                    }
-                    joinFields = primaryKeys.ToDictionary(c => c, c => c);
-                }
-                else
-                {
-                    joinFields = EntityManager.GetRelationFields(sourceEntityType, targetEntityType);
-                    if (joinFields.IsNullOrEmpty())
-                    {
-                        useValueAsSource = true;
-                        joinFields = EntityManager.GetRelationFields(targetEntityType, sourceEntityType);
-                    }
-                    if (joinFields.IsNullOrEmpty())
-                    {
-                        return string.Empty;
-                    }
-                }
-            }
-            List<string> joinList = new List<string>();
-            foreach (var joinField in joinFields)
-            {
-                if (string.IsNullOrWhiteSpace(joinField.Key) || string.IsNullOrWhiteSpace(joinField.Value))
-                {
-                    continue;
-                }
-                var sourceField = DataManager.GetField(DatabaseServerType, sourceEntityType, joinField.Key);
-                var targetField = DataManager.GetField(DatabaseServerType, targetEntityType, joinField.Value);
-                joinList.Add($" {sourceObjectPetName}.{SQLiteManager.WrapKeyword(useValueAsSource ? targetField.FieldName : sourceField.FieldName)}{GetJoinOperator(joinEntry.Operator)}{targetObjectPetName}.{SQLiteManager.WrapKeyword(useValueAsSource ? sourceField.FieldName : targetField.FieldName)}");
-            }
-            return joinList.IsNullOrEmpty() ? string.Empty : " ON" + string.Join(" AND", joinList);
-        }
-
-        /// <summary>
-        /// Get sql operator by join operator
-        /// </summary>
-        /// <param name="joinOperator">Join operator</param>
-        /// <returns>Return a sql operator</returns>
-        string GetJoinOperator(JoinOperator joinOperator)
-        {
-            string sqlOperator = string.Empty;
-            switch (joinOperator)
-            {
-                case JoinOperator.Equal:
-                    sqlOperator = EqualOperator;
-                    break;
-                case JoinOperator.GreaterThan:
-                    sqlOperator = GreaterThanOperator;
-                    break;
-                case JoinOperator.GreaterThanOrEqual:
-                    sqlOperator = GreaterThanOrEqualOperator;
-                    break;
-                case JoinOperator.NotEqual:
-                    sqlOperator = NotEqualOperator;
-                    break;
-                case JoinOperator.LessThan:
-                    sqlOperator = LessThanOperator;
-                    break;
-                case JoinOperator.LessThanOrEqual:
-                    sqlOperator = LessThanOrEqualOperator;
-                    break;
-            }
-            return sqlOperator;
         }
 
         /// <summary>
