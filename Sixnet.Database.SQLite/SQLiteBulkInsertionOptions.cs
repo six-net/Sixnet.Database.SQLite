@@ -1,8 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using Sixnet.Development.Data.Database;
 
-namespace EZNEW.Data.SQLite
+namespace Sixnet.Database.SQLite
 {
     /// <summary>
     /// Defines sqlite bulk insertion options
