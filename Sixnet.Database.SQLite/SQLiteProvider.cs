@@ -14,7 +14,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Imeplements database provider for the SQLite
     /// </summary>
-    public class SQLiteProvider : BaseDatabaseProvider
+    public class SQLiteProvider : BaseSixnetDatabaseProvider
     {
         #region Constructor
 
@@ -32,7 +32,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns></returns>
-        public override IDbConnection GetDbConnection(DatabaseServer server)
+        public override IDbConnection GetDbConnection(SixnetDatabaseServer server)
         {
             return SQLiteManager.GetConnection(server);
         }
@@ -45,7 +45,7 @@ namespace Sixnet.Database.SQLite
         /// Get data command resolver
         /// </summary>
         /// <returns></returns>
-        protected override IDataCommandResolver GetDataCommandResolver()
+        protected override ISixnetDataCommandResolver GetDataCommandResolver()
         {
             return SQLiteManager.GetCommandResolver();
         }
@@ -72,13 +72,13 @@ namespace Sixnet.Database.SQLite
         /// Bulk insert datas
         /// </summary>
         /// <param name="databaseBulkInsertCommand">Database command</param>
-        public override async Task BulkInsertAsync(DatabaseBulkInsertCommand databaseBulkInsertCommand)
+        public override async Task BulkInsertAsync(BulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
             var server = databaseBulkInsertCommand?.Connection?.DatabaseServer;
-            ThrowHelper.ThrowArgNullIf(server == null, nameof(DatabaseBulkInsertCommand.Connection.DatabaseServer));
+            SixnetDirectThrower.ThrowArgNullIf(server == null, nameof(BulkInsertDatabaseCommand.Connection.DatabaseServer));
 
             var dataTable = databaseBulkInsertCommand.DataTable;
-            ThrowHelper.ThrowArgNullIf(dataTable == null, nameof(DatabaseBulkInsertCommand.DataTable));
+            SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
 
             var sqliteResolver = new SQLiteDataCommandResolver();
 
@@ -148,13 +148,13 @@ VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterN
         /// Bulk insert datas
         /// </summary>
         /// <param name="databaseBulkInsertCommand">Database command</param>
-        public override void BulkInsert(DatabaseBulkInsertCommand databaseBulkInsertCommand)
+        public override void BulkInsert(BulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
             var server = databaseBulkInsertCommand?.Connection?.DatabaseServer;
-            ThrowHelper.ThrowArgNullIf(server == null, nameof(DatabaseBulkInsertCommand.Connection.DatabaseServer));
+            SixnetDirectThrower.ThrowArgNullIf(server == null, nameof(BulkInsertDatabaseCommand.Connection.DatabaseServer));
 
             var dataTable = databaseBulkInsertCommand.DataTable;
-            ThrowHelper.ThrowArgNullIf(dataTable == null, nameof(DatabaseBulkInsertCommand.DataTable));
+            SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
 
             var sqliteResolver = new SQLiteDataCommandResolver();
 

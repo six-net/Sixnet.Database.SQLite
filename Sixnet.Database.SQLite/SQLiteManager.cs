@@ -49,7 +49,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns>Return database connection</returns>
-        public static IDbConnection GetConnection(DatabaseServer server)
+        public static IDbConnection GetConnection(SixnetDatabaseServer server)
         {
             //var serverIdentityValue = server.GetServerIdentityValue();
             //if (!Connections.TryGetValue(serverIdentityValue, out var conn))
@@ -65,7 +65,7 @@ namespace Sixnet.Database.SQLite
             //    }
             //}
             //return conn;
-           var conn = DataManager.GetDatabaseConnection(server) ?? new SqliteConnection(server.ConnectionString);
+           var conn = SixnetDataManager.GetDatabaseConnection(server) ?? new SqliteConnection(server.ConnectionString);
             //if(!ServerLocks.TryGetValue(serverIdentityValue,out var serverLock))
             //{
             //    lock(ServerLocks)

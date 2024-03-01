@@ -16,7 +16,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Defines command resolver for sqlite
     /// </summary>
-    internal class SQLiteDataCommandResolver : BaseDataCommandResolver
+    internal class SQLiteDataCommandResolver : BaseSixnetDataCommandResolver
     {
         #region Constructor
 
@@ -62,11 +62,11 @@ namespace Sixnet.Database.SQLite
         /// <param name="translationResult">Queryable translation result</param>
         /// <param name="location">Queryable location</param>
         /// <returns></returns>
-        protected override DatabaseQueryStatement GenerateQueryStatementCore(DataCommandResolveContext context, QueryableTranslationResult translationResult, QueryableLocation location)
+        protected override QueryDatabaseStatement GenerateQueryStatementCore(DataCommandResolveContext context, QueryableTranslationResult translationResult, QueryableLocation location)
         {
             var queryable = translationResult.GetOriginalQueryable();
             string sqlStatement;
-            IEnumerable<IDataField> outputFields = null;
+            IEnumerable<ISixnetDataField> outputFields = null;
             switch (queryable.ExecutionMode)
             {
                 case QueryableExecutionMode.Script:
@@ -112,7 +112,7 @@ namespace Sixnet.Database.SQLite
                     // output fields
                     if (outputFields.IsNullOrEmpty() || !queryable.SelectedFields.IsNullOrEmpty())
                     {
-                        outputFields = DataManager.GetQueryableFields(DatabaseServerType, queryable.GetModelType(), queryable, context.IsRootQueryable(queryable));
+                        outputFields = SixnetDataManager.GetQueryableFields(DatabaseServerType, queryable.GetModelType(), queryable, context.IsRootQueryable(queryable));
                     }
                     var outputFieldString = FormatFieldsString(context, queryable, location, FieldLocation.Output, outputFields);
                     //pre script
@@ -149,7 +149,7 @@ namespace Sixnet.Database.SQLite
                 LogScript(sqlStatement, parameters);
             }
 
-            return DatabaseQueryStatement.Create(sqlStatement, parameters, outputFields);
+            return QueryDatabaseStatement.Create(sqlStatement, parameters, outputFields);
         }
 
         #endregion
@@ -161,12 +161,12 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<DatabaseExecutionStatement> GenerateInsertStatements(DataCommandResolveContext context)
+        protected override List<ExecutionDatabaseStatement> GenerateInsertStatements(DataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
             var entityType = dataCommandExecutionContext.Command.GetEntityType();
-            var fields = DataManager.GetInsertableFields(DatabaseServerType, entityType);
+            var fields = SixnetDataManager.GetInsertableFields(DatabaseServerType, entityType);
             var fieldCount = fields.GetCount();
             var insertFields = new List<string>(fieldCount);
             var insertValues = new List<string>(fieldCount);
@@ -199,7 +199,7 @@ namespace Sixnet.Database.SQLite
                 }
             }
 
-            ThrowHelper.ThrowNotSupportIf(autoIncrementField != null && splitField != null, $"Not support auto increment field for split table:{entityType.Name}");
+            SixnetDirectThrower.ThrowNotSupportIf(autoIncrementField != null && splitField != null, $"Not support auto increment field for split table:{entityType.Name}");
 
             if (splitField != null)
             {
@@ -207,7 +207,7 @@ namespace Sixnet.Database.SQLite
             }
             var tableNames = dataCommandExecutionContext.GetTableNames();
 
-            ThrowHelper.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
+            SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
 
             var statementBuilder = new StringBuilder();
             var scriptTemplate = $"INSERT INTO {{0}} ({string.Join(",", insertFields)}) VALUES ({string.Join(",", insertValues)});";
@@ -220,9 +220,9 @@ namespace Sixnet.Database.SQLite
                 var incrField = $"{command.Id}";
                 statementBuilder.AppendLine($"SELECT LAST_INSERT_ROWID() {ColumnPetNameKeyword} {incrField};");
             }
-            return new List<DatabaseExecutionStatement>(1)
+            return new List<ExecutionDatabaseStatement>(1)
             {
-                new DatabaseExecutionStatement()
+                new ExecutionDatabaseStatement()
                 {
                     Script = statementBuilder.ToString(),
                     ScriptType = GetCommandType(command),
@@ -241,7 +241,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<DatabaseExecutionStatement> GenerateUpdateStatements(DataCommandResolveContext context)
+        protected override List<ExecutionDatabaseStatement> GenerateUpdateStatements(DataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             SixnetException.ThrowIf(command?.FieldsAssignment?.NewValues.IsNullOrEmpty() ?? true, "No set update field");
@@ -265,15 +265,15 @@ namespace Sixnet.Database.SQLite
             {
                 var newValue = newValueItem.Value;
                 var propertyName = newValueItem.Key;
-                var updateField = DataManager.GetField(dataCommandExecutionContext.Server.ServerType, command.GetEntityType(), PropertyField.Create(propertyName)) as PropertyField;
-                ThrowHelper.ThrowFrameworkErrorIf(updateField == null, $"Not found field:{propertyName}");
+                var updateField = SixnetDataManager.GetField(dataCommandExecutionContext.Server.ServerType, command.GetEntityType(), PropertyField.Create(propertyName)) as PropertyField;
+                SixnetDirectThrower.ThrowSixnetExceptionIf(updateField == null, $"Not found field:{propertyName}");
                 var fieldFormattedName = WrapKeywordFunc(updateField.FieldName);
                 var newValueExpression = FormatUpdateValueField(context, command, newValue);
                 updateSetArray.Add($"{fieldFormattedName}={newValueExpression}");
             }
             var tableNames = dataCommandExecutionContext.GetTableNames(command);
             var entityType = dataCommandExecutionContext.Command.GetEntityType();
-            ThrowHelper.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
+            SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
 
             string scriptTemplate;
             if (string.IsNullOrWhiteSpace(join) && preScripts.IsNullOrEmpty())
@@ -282,7 +282,7 @@ namespace Sixnet.Database.SQLite
             }
             else
             {
-                var primaryKeyFields = DataManager.GetFields(DatabaseServerType, entityType, EntityManager.GetPrimaryKeyFields(entityType));
+                var primaryKeyFields = SixnetDataManager.GetFields(DatabaseServerType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
                 var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
@@ -295,10 +295,10 @@ namespace Sixnet.Database.SQLite
             parameters.Union(context.GetParameters());
 
             // statements
-            var statements = new List<DatabaseExecutionStatement>();
+            var statements = new List<ExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new DatabaseExecutionStatement()
+                statements.Add(new ExecutionDatabaseStatement()
                 {
                     Script = string.Format(scriptTemplate, WrapKeywordFunc(tableName)),
                     ScriptType = GetCommandType(command),
@@ -322,7 +322,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<DatabaseExecutionStatement> GenerateDeleteStatements(DataCommandResolveContext context)
+        protected override List<ExecutionDatabaseStatement> GenerateDeleteStatements(DataCommandResolveContext context)
         {
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
             var command = dataCommandExecutionContext.Command;
@@ -340,7 +340,7 @@ namespace Sixnet.Database.SQLite
 
             var tableNames = dataCommandExecutionContext.GetTableNames(command);
             var entityType = dataCommandExecutionContext.Command.GetEntityType();
-            ThrowHelper.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
+            SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
             var tablePetName = command.Queryable == null ? context.GetNewTablePetName() : context.GetDefaultTablePetName(command.Queryable);
 
             string scriptTemplate;
@@ -350,7 +350,7 @@ namespace Sixnet.Database.SQLite
             }
             else
             {
-                var primaryKeyFields = DataManager.GetFields(DatabaseServerType, entityType, EntityManager.GetPrimaryKeyFields(entityType));
+                var primaryKeyFields = SixnetDataManager.GetFields(DatabaseServerType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
                 var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
@@ -363,10 +363,10 @@ namespace Sixnet.Database.SQLite
             parameters.Union(context.GetParameters());
 
             // statement
-            var statements = new List<DatabaseExecutionStatement>();
+            var statements = new List<ExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new DatabaseExecutionStatement()
+                statements.Add(new ExecutionDatabaseStatement()
                 {
                     Script = string.Format(scriptTemplate, WrapKeywordFunc(tableName)),
                     ScriptType = GetCommandType(command),
@@ -390,15 +390,15 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="migrationCommand">Migration command</param>
         /// <returns></returns>
-        protected override List<DatabaseExecutionStatement> GetCreateTableStatements(DatabaseMigrationCommand migrationCommand)
+        protected override List<ExecutionDatabaseStatement> GetCreateTableStatements(MigrationDatabaseCommand migrationCommand)
         {
             var migrationInfo = migrationCommand.MigrationInfo;
             if (migrationInfo?.NewTables.IsNullOrEmpty() ?? true)
             {
-                return new List<DatabaseExecutionStatement>(0);
+                return new List<ExecutionDatabaseStatement>(0);
             }
             var newTables = migrationInfo.NewTables;
-            var statements = new List<DatabaseExecutionStatement>();
+            var statements = new List<ExecutionDatabaseStatement>();
             var options = migrationCommand.MigrationInfo;
             foreach (var newTableInfo in newTables)
             {
@@ -407,14 +407,14 @@ namespace Sixnet.Database.SQLite
                     continue;
                 }
                 var entityType = newTableInfo.EntityType;
-                var entityConfig = EntityManager.GetEntityConfiguration(entityType);
-                ThrowHelper.ThrowFrameworkErrorIf(entityConfig == null, $"Get entity config failed for {entityType.Name}");
+                var entityConfig = SixnetEntityManager.GetEntityConfiguration(entityType);
+                SixnetDirectThrower.ThrowSixnetExceptionIf(entityConfig == null, $"Get entity config failed for {entityType.Name}");
 
                 var newFieldScripts = new List<string>();
                 var primaryKeyNames = new List<string>();
                 foreach (var field in entityConfig.AllFields)
                 {
-                    var dataField = DataManager.GetField(SQLiteManager.CurrentDatabaseServerType, entityType, field.Value);
+                    var dataField = SixnetDataManager.GetField(SQLiteManager.CurrentDatabaseServerType, entityType, field.Value);
                     if (dataField is EntityField dataEntityField)
                     {
                         var dataFieldName = SQLiteManager.WrapKeyword(dataEntityField.FieldName);
@@ -427,7 +427,7 @@ namespace Sixnet.Database.SQLite
                 }
                 foreach (var tableName in newTableInfo.TableNames)
                 {
-                    var createTableStatement = new DatabaseExecutionStatement()
+                    var createTableStatement = new ExecutionDatabaseStatement()
                     {
                         Script = $"CREATE TABLE IF NOT EXISTS {tableName} ({string.Join(",", newFieldScripts)}{(primaryKeyNames.IsNullOrEmpty() ? "" : ", PRIMARY KEY (" + string.Join(",", primaryKeyNames) + ")")});"
                     };
@@ -475,7 +475,7 @@ namespace Sixnet.Database.SQLite
         /// <returns></returns>
         protected override string GetSqlDataType(EntityField field, MigrationInfo options)
         {
-            ThrowHelper.ThrowArgNullIf(field == null, nameof(field));
+            SixnetDirectThrower.ThrowArgNullIf(field == null, nameof(field));
             if (!string.IsNullOrWhiteSpace(field.DbType))
             {
                 return field.DbType;

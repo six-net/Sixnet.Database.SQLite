@@ -5,7 +5,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Defines sqlite bulk insertion options
     /// </summary>
-    public class SQLiteBulkInsertionOptions : IBulkInsertionOptions
+    public class SQLiteBulkInsertionOptions : ISixnetBulkInsertionOptions
     {
         /// <summary>
         /// Indicates whether use transaction

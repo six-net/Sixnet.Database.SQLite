@@ -6,11 +6,11 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Default field converter for sqlite
     /// </summary>
-    public class SQLiteDefaultFieldFormatter : IFieldFormatter
+    public class SQLiteDefaultFieldFormatter : ISixnetFieldFormatter
     {
-        public string Format(FieldFormatContext context)
+        public string Format(FormatFieldContext context)
         {
-            var formatOption = context.FormatOption;
+            var formatOption = context.FormatSetting;
             var formatedFieldName = context.FieldName;
             formatedFieldName = formatOption.Name switch
             {
