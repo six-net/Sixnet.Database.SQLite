@@ -16,7 +16,7 @@ namespace Sixnet.Database.SQLite
         /// <summary>
         /// Gets current database server type
         /// </summary>
-        internal const DatabaseServerType CurrentDatabaseServerType = DatabaseServerType.SQLite;
+        internal const DatabaseType CurrentDatabaseServerType = DatabaseType.SQLite;
 
         /// <summary>
         /// Key word prefix
@@ -49,7 +49,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns>Return database connection</returns>
-        public static IDbConnection GetConnection(SixnetDatabaseServer server)
+        public static IDbConnection GetConnection(DatabaseServer server)
         {
             //var serverIdentityValue = server.GetServerIdentityValue();
             //if (!Connections.TryGetValue(serverIdentityValue, out var conn))

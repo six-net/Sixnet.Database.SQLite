@@ -14,7 +14,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Imeplements database provider for the SQLite
     /// </summary>
-    public class SQLiteProvider : BaseSixnetDatabaseProvider
+    public class SQLiteProvider : BaseDatabaseProvider
     {
         #region Constructor
 
@@ -32,7 +32,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns></returns>
-        public override IDbConnection GetDbConnection(SixnetDatabaseServer server)
+        public override IDbConnection GetDbConnection(DatabaseServer server)
         {
             return SQLiteManager.GetConnection(server);
         }
