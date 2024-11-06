@@ -1,4 +1,5 @@
-﻿using Sixnet.Development.Data.Database;
+﻿using Sixnet.Development.Data;
+using Sixnet.Development.Data.Database;
 
 namespace Sixnet.Database.SQLite
 {
@@ -8,8 +9,8 @@ namespace Sixnet.Database.SQLite
     public class SQLiteBulkInsertionOptions : ISixnetBulkInsertionOptions
     {
         /// <summary>
-        /// Indicates whether use transaction
+        /// Gets or sets the data operation options
         /// </summary>
-        public bool UseTransaction { get; set; }
+        public SixnetDataOperationOptions DataOperationOptions { get; set; }
     }
 }

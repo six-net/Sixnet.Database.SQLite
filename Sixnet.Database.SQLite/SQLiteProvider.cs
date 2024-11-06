@@ -74,73 +74,41 @@ namespace Sixnet.Database.SQLite
         /// <param name="databaseBulkInsertCommand">Database command</param>
         public override async Task BulkInsertAsync(BulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
-            var server = databaseBulkInsertCommand?.Connection?.DatabaseServer;
-            SixnetDirectThrower.ThrowArgNullIf(server == null, nameof(BulkInsertDatabaseCommand.Connection.DatabaseServer));
-
-            var dataTable = databaseBulkInsertCommand.DataTable;
-            SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
-
-            var sqliteResolver = new SQLiteDataCommandResolver();
-
-            using (var conn = new SqliteConnection(server?.ConnectionString))
+            try
             {
-                try
+                var dataTable = databaseBulkInsertCommand.DataTable;
+                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
+                var sqliteResolver = new SQLiteDataCommandResolver();
+                var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
+                var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
+                var columns = new List<string>(dataTable.Columns.Count);
+                var parameters = new Dictionary<string, SqliteParameter>(dataTable.Columns.Count);
+                var command = conn.CreateCommand();
+                foreach (DataColumn col in dataTable.Columns)
                 {
-                    conn.Open();
-                    SqliteTransaction tran = null;
-                    var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
-                    if (bulkInsertOptions is SQLiteBulkInsertionOptions sqliteBulkInsertOptions && sqliteBulkInsertOptions != null)
-                    {
-                        if (sqliteBulkInsertOptions.UseTransaction)
-                        {
-                            tran = conn.BeginTransaction();
-                        }
-                    }
-                    else //default use transaction
-                    {
-                        tran = conn.BeginTransaction();
-                    }
-                    var columns = new List<string>(dataTable.Columns.Count);
-                    var parameters = new Dictionary<string, SqliteParameter>(dataTable.Columns.Count);
-                    var command = conn.CreateCommand();
-                    foreach (DataColumn col in dataTable.Columns)
-                    {
-                        columns.Add(col.ColumnName);
-                        var parameter = command.CreateParameter();
-                        parameter.ParameterName = $"{sqliteResolver.FormatParameterName(col.ColumnName)}";
-                        parameters[col.ColumnName] = parameter;
-                        command.Parameters.Add(parameter);
-                    }
+                    columns.Add(col.ColumnName);
+                    var parameter = command.CreateParameter();
+                    parameter.ParameterName = $"{sqliteResolver.FormatParameterName(col.ColumnName)}";
+                    parameters[col.ColumnName] = parameter;
+                    command.Parameters.Add(parameter);
+                }
 
-                    command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
-VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
+                command.CommandText = $@"INSERT INTO {dataTable.TableName} 
+                ({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
+                VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
 
-                    foreach (DataRow row in dataTable.Rows)
-                    {
-                        foreach (var parameterItem in parameters)
-                        {
-                            parameterItem.Value.Value = row[parameterItem.Key];
-                        }
-                        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
-                    }
-                    if (tran != null)
-                    {
-                        tran.Commit();
-                        tran.Dispose();
-                    }
-                }
-                catch (Exception ex)
+                foreach (DataRow row in dataTable.Rows)
                 {
-                    throw ex;
-                }
-                finally
-                {
-                    if (conn != null && conn.State != ConnectionState.Closed)
+                    foreach (var parameterItem in parameters)
                     {
-                        conn.Close();
+                        parameterItem.Value.Value = row[parameterItem.Key];
                     }
+                    await command.ExecuteNonQueryAsync().ConfigureAwait(false);
                 }
+            }
+            catch (Exception ex)
+            {
+                throw GetSqlException(ex);
             }
         }
 
@@ -150,74 +118,59 @@ VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterN
         /// <param name="databaseBulkInsertCommand">Database command</param>
         public override void BulkInsert(BulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
-            var server = databaseBulkInsertCommand?.Connection?.DatabaseServer;
-            SixnetDirectThrower.ThrowArgNullIf(server == null, nameof(BulkInsertDatabaseCommand.Connection.DatabaseServer));
-
-            var dataTable = databaseBulkInsertCommand.DataTable;
-            SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
-
-            var sqliteResolver = new SQLiteDataCommandResolver();
-
-            using (var conn = new SqliteConnection(server?.ConnectionString))
+            try
             {
-                try
+                var dataTable = databaseBulkInsertCommand.DataTable;
+                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
+                var sqliteResolver = new SQLiteDataCommandResolver();
+                var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
+                var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
+                var columns = new List<string>(dataTable.Columns.Count);
+                var parameters = new Dictionary<string, SqliteParameter>(dataTable.Columns.Count);
+                var command = conn.CreateCommand();
+                foreach (DataColumn col in dataTable.Columns)
                 {
-                    conn.Open();
-                    SqliteTransaction tran = null;
-                    var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
-                    if (bulkInsertOptions is SQLiteBulkInsertionOptions sqliteBulkInsertOptions && sqliteBulkInsertOptions != null)
-                    {
-                        if (sqliteBulkInsertOptions.UseTransaction)
-                        {
-                            tran = conn.BeginTransaction();
-                        }
-                    }
-                    else //default use transaction
-                    {
-                        tran = conn.BeginTransaction();
-                    }
-                    var columns = new List<string>(dataTable.Columns.Count);
-                    var parameters = new Dictionary<string, SqliteParameter>(dataTable.Columns.Count);
-                    var command = conn.CreateCommand();
-                    foreach (DataColumn col in dataTable.Columns)
-                    {
-                        columns.Add(col.ColumnName);
-                        var parameter = command.CreateParameter();
-                        parameter.ParameterName = $"{sqliteResolver.FormatParameterName(col.ColumnName)}";
-                        parameters[col.ColumnName] = parameter;
-                        command.Parameters.Add(parameter);
-                    }
-
-                    command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
-VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
-
-                    foreach (DataRow row in dataTable.Rows)
-                    {
-                        foreach (var parameterItem in parameters)
-                        {
-                            parameterItem.Value.Value = row[parameterItem.Key];
-                        }
-                        command.ExecuteNonQuery();
-                    }
-                    if (tran != null)
-                    {
-                        tran.Commit();
-                        tran.Dispose();
-                    }
+                    columns.Add(col.ColumnName);
+                    var parameter = command.CreateParameter();
+                    parameter.ParameterName = $"{sqliteResolver.FormatParameterName(col.ColumnName)}";
+                    parameters[col.ColumnName] = parameter;
+                    command.Parameters.Add(parameter);
                 }
-                catch (Exception ex)
+
+                command.CommandText = $@"INSERT INTO {dataTable.TableName} 
+                ({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
+                VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
+
+                foreach (DataRow row in dataTable.Rows)
                 {
-                    throw ex;
-                }
-                finally
-                {
-                    if (conn != null && conn.State != ConnectionState.Closed)
+                    foreach (var parameterItem in parameters)
                     {
-                        conn.Close();
+                        parameterItem.Value.Value = row[parameterItem.Key];
                     }
+                    command.ExecuteNonQuery();
                 }
             }
+            catch (Exception ex)
+            {
+                throw GetSqlException(ex);
+            }
+        }
+
+        #endregion
+
+        #region Get exception
+
+        protected override Exception GetSqlException(Exception ex)
+        {
+            if (ex is SqliteException sqlException)
+            {
+                switch (sqlException.SqliteErrorCode)
+                {
+                    case 19:
+                        return new SixnetSqlAlreadExistsException(sqlException.Message, sqlException);
+                }
+            }
+            return ex;
         }
 
         #endregion
