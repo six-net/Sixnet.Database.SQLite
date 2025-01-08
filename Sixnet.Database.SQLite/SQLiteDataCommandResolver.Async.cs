@@ -1,58 +1,20 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data;
-using System.Linq;
 using System.Text;
-using Sixnet.Development.Data;
 using Sixnet.Development.Data.Command;
 using Sixnet.Development.Data.Database;
 using Sixnet.Development.Data.Field;
+using Sixnet.Development.Data;
 using Sixnet.Development.Entity;
 using Sixnet.Development.Queryable;
 using Sixnet.Exceptions;
+using System.Threading.Tasks;
+using System.Linq;
 
 namespace Sixnet.Database.SQLite
 {
-    /// <summary>
-    /// Defines command resolver for sqlite
-    /// </summary>
-    internal partial class SQLiteDataCommandResolver : BaseDataCommandResolver
+    internal partial class SQLiteDataCommandResolver
     {
-        #region Constructor
-
-        public SQLiteDataCommandResolver()
-        {
-            DatabaseType = DatabaseType.SQLite;
-            DefaultFieldFormatter = new SQLiteDefaultFieldFormatter();
-            ParameterPrefix = "@";
-            WrapKeywordFunc = SQLiteManager.WrapKeyword;
-            RecursiveKeyword = "WITH RECURSIVE";
-            DbTypeDefaultValues = new Dictionary<DbType, string>()
-            {
-                { DbType.Byte, "0" },
-                { DbType.SByte, "0" },
-                { DbType.Int16, "0" },
-                { DbType.UInt16, "0" },
-                { DbType.Int32, "0" },
-                { DbType.UInt32, "0" },
-                { DbType.Int64, "0" },
-                { DbType.UInt64, "0" },
-                { DbType.Single, "0" },
-                { DbType.Double, "0" },
-                { DbType.Decimal, "0" },
-                { DbType.Boolean, "0" },
-                { DbType.String, "''" },
-                { DbType.StringFixedLength, "''" },
-                { DbType.Guid, Guid.Empty.ToString() },
-                { DbType.DateTime, "CURRENT_TIMESTAMP" },
-                { DbType.DateTime2, "CURRENT_TIMESTAMP" },
-                { DbType.DateTimeOffset, "CURRENT_TIMESTAMP" },
-                { DbType.Time, "TIME()" }
-            };
-        }
-
-        #endregion
-
         #region Get query statement
 
         /// <summary>
@@ -62,7 +24,7 @@ namespace Sixnet.Database.SQLite
         /// <param name="translationResult">Queryable translation result</param>
         /// <param name="location">Queryable location</param>
         /// <returns></returns>
-        protected override QueryDatabaseStatement GenerateQueryStatementCore(DataCommandResolveContext context, QueryableTranslationResult translationResult, QueryableLocation location)
+        protected override async Task<QueryDatabaseStatement> GenerateQueryStatementCoreAsync(DataCommandResolveContext context, QueryableTranslationResult translationResult, QueryableLocation location)
         {
             var queryable = translationResult.GetOriginalQueryable();
             string sqlStatement;
@@ -94,7 +56,7 @@ namespace Sixnet.Database.SQLite
                     if (string.IsNullOrWhiteSpace(targetScript))
                     {
                         //target
-                        var targetStatement = GetFromTargetStatement(context, queryable, location, tablePetName);
+                        var targetStatement = await GetFromTargetStatementAsync(context, queryable, location, tablePetName).ConfigureAwait(false);
                         outputFields = targetStatement.OutputFields;
                         //condition
                         var condition = translationResult.GetCondition(ConditionStartKeyword);
@@ -114,7 +76,7 @@ namespace Sixnet.Database.SQLite
                     {
                         outputFields = SixnetDataManager.GetQueryableFields(DatabaseType, queryable.GetModelType(), queryable, context.IsRootQueryable(queryable));
                     }
-                    var outputFieldString = FormatFieldsString(context, queryable, location, FieldLocation.Output, outputFields);
+                    var outputFieldString = await FormatFieldsStringAsync(context, queryable, location, FieldLocation.Output, outputFields).ConfigureAwait(false);
                     //pre script
                     var preScript = GetPreScript(context, location);
                     //statement
@@ -161,7 +123,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateInsertStatements(DataCommandResolveContext context)
+        protected override async Task<List<ExecutionDatabaseStatement>> GenerateInsertStatementsAsync(DataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
@@ -192,7 +154,7 @@ namespace Sixnet.Database.SQLite
                 insertFields.Add(WrapKeywordFunc(field.GetFieldName(DatabaseType)));
                 // values
                 var insertValue = command.FieldsAssignment.GetNewValue(field.PropertyName);
-                insertValues.Add(FormatInsertValueField(context, command.Queryable, insertValue));
+                insertValues.Add(await FormatInsertValueFieldAsync(context, command.Queryable, insertValue).ConfigureAwait(false));
 
                 // split value
                 if (field.InRole(FieldRole.SplitValue))
@@ -208,7 +170,7 @@ namespace Sixnet.Database.SQLite
             {
                 dataCommandExecutionContext.SetSplitValues(new List<dynamic>(1) { splitValue });
             }
-            var tableNames = dataCommandExecutionContext.GetTableNames();
+            var tableNames = await dataCommandExecutionContext.GetTableNamesAsync().ConfigureAwait(false);
 
             SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
 
@@ -244,14 +206,14 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateUpdateStatements(DataCommandResolveContext context)
+        protected override async Task<List<ExecutionDatabaseStatement>> GenerateUpdateStatementsAsync(DataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             SixnetException.ThrowIf(command?.FieldsAssignment?.NewValues.IsNullOrEmpty() ?? true, "No set update field");
 
             #region translate
 
-            var translationResult = Translate(context);
+            var translationResult = await TranslateAsync(context).ConfigureAwait(false);
             var condition = translationResult?.GetCondition(ConditionStartKeyword);
             var join = translationResult?.GetJoin();
             var preScripts = context.GetPreScripts();
@@ -271,10 +233,10 @@ namespace Sixnet.Database.SQLite
                 var updateField = SixnetDataManager.GetField(dataCommandExecutionContext.Server.DatabaseType, command.GetEntityType(), DataField.Create(propertyName)) as DataField;
                 SixnetDirectThrower.ThrowSixnetExceptionIf(updateField == null, $"Not found field:{propertyName}");
                 var fieldFormattedName = WrapKeywordFunc(updateField.GetFieldName(DatabaseType));
-                var newValueExpression = FormatUpdateValueField(context, command, newValue);
+                var newValueExpression = await FormatUpdateValueFieldAsync(context, command, newValue).ConfigureAwait(false);
                 updateSetArray.Add($"{fieldFormattedName}={newValueExpression}");
             }
-            var tableNames = dataCommandExecutionContext.GetTableNames(command);
+            var tableNames = await dataCommandExecutionContext.GetTableNamesAsync(command).ConfigureAwait(false);
             var entityType = dataCommandExecutionContext.Command.GetEntityType();
             SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
 
@@ -288,8 +250,13 @@ namespace Sixnet.Database.SQLite
                 var primaryKeyFields = SixnetDataManager.GetFields(DatabaseType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
-                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
-                var queryStatement = GenerateQueryStatementCore(context, translationResult, QueryableLocation.UsingSource);
+                var formatedPrimaryKeyFields = new List<string>();
+                foreach (var primaryKeyField in primaryKeyFields)
+                {
+                    formatedPrimaryKeyFields.Add(await FormatFieldAsync(context, command.Queryable, primaryKeyField, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName).ConfigureAwait(false));
+                }
+                var primaryKeyString = string.Join("||", formatedPrimaryKeyFields);
+                var queryStatement = await GenerateQueryStatementCoreAsync(context, translationResult, QueryableLocation.UsingSource).ConfigureAwait(false);
                 scriptTemplate = $"UPDATE {{0}}{TablePetNameKeyword}{tablePetName} SET {string.Join(",", updateSetArray)} WHERE {primaryKeyString} IN (SELECT {primaryKeyString} FROM ({queryStatement.Script}){TablePetNameKeyword}{tablePetName});";
             }
 
@@ -325,14 +292,14 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateDeleteStatements(DataCommandResolveContext context)
+        protected override async Task<List<ExecutionDatabaseStatement>> GenerateDeleteStatementsAsync(DataCommandResolveContext context)
         {
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
             var command = dataCommandExecutionContext.Command;
 
             #region translate
 
-            var translationResult = Translate(context);
+            var translationResult = await TranslateAsync(context).ConfigureAwait(false);
             var condition = translationResult?.GetCondition(ConditionStartKeyword);
             var join = translationResult?.GetJoin();
             var preScripts = context.GetPreScripts();
@@ -341,7 +308,7 @@ namespace Sixnet.Database.SQLite
 
             #region script
 
-            var tableNames = dataCommandExecutionContext.GetTableNames(command);
+            var tableNames = await dataCommandExecutionContext.GetTableNamesAsync(command).ConfigureAwait(false);
             var entityType = dataCommandExecutionContext.Command.GetEntityType();
             SixnetDirectThrower.ThrowInvalidOperationIf(tableNames.IsNullOrEmpty(), $"Get table name failed for {entityType.Name}");
             var tablePetName = command.Queryable == null ? context.GetNewTablePetName() : context.GetDefaultTablePetName(command.Queryable);
@@ -356,8 +323,13 @@ namespace Sixnet.Database.SQLite
                 var primaryKeyFields = SixnetDataManager.GetFields(DatabaseType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
-                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
-                var queryStatement = GenerateQueryStatementCore(context, translationResult, QueryableLocation.UsingSource);
+                var formatedPrimaryKeyFields = new List<string>();
+                foreach (var primaryKeyField in primaryKeyFields)
+                {
+                    formatedPrimaryKeyFields.Add(await FormatFieldAsync(context, command.Queryable, primaryKeyField, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName).ConfigureAwait(false));
+                }
+                var primaryKeyString = string.Join("||", formatedPrimaryKeyFields);
+                var queryStatement = await GenerateQueryStatementCoreAsync(context, translationResult, QueryableLocation.UsingSource).ConfigureAwait(false);
                 scriptTemplate = $"DELETE FROM {{0}}{TablePetNameKeyword}{tablePetName} WHERE {primaryKeyString} IN (SELECT {primaryKeyString} FROM ({queryStatement.Script}){TablePetNameKeyword}{tablePetName});";
             }
 
@@ -393,7 +365,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="migrationCommand">Migration command</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GetCreateTableStatements(MigrationDatabaseCommand migrationCommand)
+        protected override async Task<List<ExecutionDatabaseStatement>> GetCreateTableStatementsAsync(MigrationDatabaseCommand migrationCommand)
         {
             var migrationInfo = migrationCommand.MigrationInfo;
             if (migrationInfo?.NewTables.IsNullOrEmpty() ?? true)
@@ -440,91 +412,7 @@ namespace Sixnet.Database.SQLite
                     LogExecutionStatement(createTableStatement);
                 }
             }
-            return statements;
-        }
-
-        #endregion
-
-        #region Get limit string
-
-        /// <summary>
-        /// Get limit string
-        /// </summary>
-        /// <param name="offsetNum">Offset num</param>
-        /// <param name="takeNum">Take num</param>
-        /// <returns></returns>
-        protected override string GetLimitString(int offsetNum, int takeNum, bool hasSort)
-        {
-            if (takeNum < 1)
-            {
-                return string.Empty;
-            }
-            if (offsetNum < 0)
-            {
-                offsetNum = 0;
-            }
-            return $" LIMIT {offsetNum},{takeNum}";
-
-        }
-
-        #endregion
-
-        #region Get field sql data type
-
-        /// <summary>
-        /// Get sql data type
-        /// </summary>
-        /// <param name="field">Field</param>
-        /// <returns></returns>
-        protected override string GetSqlDataType(DataField field, MigrationInfo options)
-        {
-            SixnetDirectThrower.ThrowArgNullIf(field == null, nameof(field));
-            if (!string.IsNullOrWhiteSpace(field.DbType))
-            {
-                return field.DbType;
-            }
-            var dbType = field.GetDataType().GetDbType();
-            var dbTypeName = "";
-            switch (dbType)
-            {
-                case DbType.AnsiString:
-                case DbType.AnsiStringFixedLength:
-                case DbType.Guid:
-                case DbType.DateTime:
-                case DbType.Date:
-                case DbType.DateTime2:
-                case DbType.DateTimeOffset:
-                case DbType.UInt64:
-                case DbType.String:
-                case DbType.StringFixedLength:
-                case DbType.Time:
-                case DbType.Xml:
-                    dbTypeName = "TEXT";
-                    break;
-                case DbType.Boolean:
-                case DbType.Byte:
-                case DbType.Int16:
-                case DbType.SByte:
-                case DbType.Int32:
-                case DbType.UInt16:
-                case DbType.UInt32:
-                case DbType.Int64:
-                    dbTypeName = "INTEGER";
-                    break;
-                case DbType.Currency:
-                case DbType.Decimal:
-                case DbType.Double:
-                case DbType.Single:
-                    dbTypeName = "REAL";
-                    break;
-                case DbType.Object:
-                case DbType.Binary:
-                    dbTypeName = "BLOB";
-                    break;
-                default:
-                    throw new NotSupportedException(dbType.ToString());
-            }
-            return dbTypeName;
+            return await Task.FromResult(statements).ConfigureAwait(false);
         }
 
         #endregion
