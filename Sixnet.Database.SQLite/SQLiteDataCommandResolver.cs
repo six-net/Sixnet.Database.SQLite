@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Text;
+
 using Sixnet.Development.Data;
 using Sixnet.Development.Data.Command;
+using Sixnet.Development.Data.Dapper;
 using Sixnet.Development.Data.Database;
 using Sixnet.Development.Data.Field;
 using Sixnet.Development.Entity;
@@ -25,6 +27,7 @@ namespace Sixnet.Database.SQLite
             DatabaseType = DatabaseType.SQLite;
             DefaultFieldFormatter = new SQLiteDefaultFieldFormatter();
             ParameterPrefix = "@";
+            FormatKeywordFunc = SQLiteManager.FormatKeyword;
             WrapKeywordFunc = SQLiteManager.WrapKeyword;
             RecursiveKeyword = "WITH RECURSIVE";
             DbTypeDefaultValues = new Dictionary<DbType, string>()
@@ -123,17 +126,23 @@ namespace Sixnet.Database.SQLite
                     {
                         case QueryableOutputType.Count:
                             sqlStatement = hasCombine
-                                ? $"{preScript}SELECT COUNT(1) FROM (({sqlStatement}){combine}){TablePetNameKeyword}{tablePetName}"
+                                ? hasSort
+                                    ? $"{preScript}SELECT COUNT(1) FROM ((SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine}){TablePetNameKeyword}{tablePetName}"
+                                    : $"{preScript}SELECT COUNT(1) FROM (({sqlStatement}){combine}){TablePetNameKeyword}{tablePetName}"
                                 : $"{preScript}SELECT COUNT(1) FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}";
                             break;
                         case QueryableOutputType.Predicate:
                             sqlStatement = hasCombine
-                                ? $"{preScript}SELECT EXISTS(({sqlStatement}){combine})"
-                                : $"{preScript}SELECT EXISTS({sqlStatement})";
+                                ? hasSort
+                                    ? $"{preScript}SELECT 1 WHERE EXISTS((SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine})"
+                                    : $"{preScript}SELECT 1 WHERE EXISTS(({sqlStatement}){combine})"
+                                : $"{preScript}SELECT 1 WHERE EXISTS({sqlStatement})";
                             break;
                         default:
                             sqlStatement = hasCombine
-                            ? $"{preScript}({sqlStatement}){combine}"
+                            ? hasSort
+                                ? $"{preScript}(SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine}"
+                                : $"{preScript}({sqlStatement}){combine}"
                             : $"{preScript}{sqlStatement}";
                             break;
                     }
@@ -183,13 +192,13 @@ namespace Sixnet.Database.SQLite
                     {
                         autoIncrementField = field;
                     }
-                    if (!SixnetDataManager.AllowInsertIncrementField(context.DataCommandExecutionContext.Command?.Options))
+                    if (!SixnetDataManager.AllowInsertIncrementField(context.DataCommandExecutionContext))
                     {
                         continue;
                     }
                 }
                 // fields
-                insertFields.Add(WrapKeywordFunc(field.GetFieldName(DatabaseType)));
+                insertFields.Add(FormatAndWrapKeywordFunc(field.GetFieldName(DatabaseType), DatabaseObjectNameType.ColumnName));
                 // values
                 var insertValue = command.FieldsAssignment.GetNewValue(field.PropertyName);
                 insertValues.Add(FormatInsertValueField(context, command.Queryable, insertValue));
@@ -216,7 +225,7 @@ namespace Sixnet.Database.SQLite
             var scriptTemplate = $"INSERT INTO {{0}} ({string.Join(",", insertFields)}) VALUES ({string.Join(",", insertValues)});";
             foreach (var tableName in tableNames)
             {
-                statementBuilder.AppendLine(string.Format(scriptTemplate, WrapKeywordFunc(tableName)));
+                statementBuilder.AppendLine(string.Format(scriptTemplate, FormatAndWrapKeywordFunc(tableName, DatabaseObjectNameType.TableName)));
             }
             if (autoIncrementField != null)
             {
@@ -270,7 +279,7 @@ namespace Sixnet.Database.SQLite
                 var propertyName = newValueItem.Key;
                 var updateField = SixnetDataManager.GetField(dataCommandExecutionContext.Server.DatabaseType, command.GetEntityType(), DataField.Create(propertyName)) as DataField;
                 SixnetDirectThrower.ThrowSixnetExceptionIf(updateField == null, $"Not found field:{propertyName}");
-                var fieldFormattedName = WrapKeywordFunc(updateField.GetFieldName(DatabaseType));
+                var fieldFormattedName = FormatAndWrapKeywordFunc(updateField.GetFieldName(DatabaseType), DatabaseObjectNameType.ColumnName);
                 var newValueExpression = FormatUpdateValueField(context, command, newValue);
                 updateSetArray.Add($"{fieldFormattedName}={newValueExpression}");
             }
@@ -303,7 +312,7 @@ namespace Sixnet.Database.SQLite
             {
                 statements.Add(new ExecutionDatabaseStatement()
                 {
-                    Script = string.Format(scriptTemplate, WrapKeywordFunc(tableName)),
+                    Script = string.Format(scriptTemplate, FormatAndWrapKeywordFunc(tableName, DatabaseObjectNameType.TableName)),
                     ScriptType = GetCommandType(command),
                     Parameters = parameters,
                     MustAffectData = true,
@@ -371,7 +380,7 @@ namespace Sixnet.Database.SQLite
             {
                 statements.Add(new ExecutionDatabaseStatement()
                 {
-                    Script = string.Format(scriptTemplate, WrapKeywordFunc(tableName)),
+                    Script = string.Format(scriptTemplate, FormatAndWrapKeywordFunc(tableName, DatabaseObjectNameType.TableName)),
                     ScriptType = GetCommandType(command),
                     MustAffectData = command.Options?.MustAffectData ?? false,
                     Parameters = parameters,
@@ -415,18 +424,24 @@ namespace Sixnet.Database.SQLite
 
                 var newFieldScripts = new List<string>();
                 var primaryKeyNames = new List<string>();
+                var hasIncrementField = false;
                 foreach (var field in entityConfig.AllFields)
                 {
                     var dataField = SixnetDataManager.GetField(SQLiteManager.CurrentDatabaseServerType, entityType, field.Value);
                     if (dataField is DataField dataEntityField)
                     {
-                        var dataFieldName = SQLiteManager.WrapKeyword(dataEntityField.GetFieldName(DatabaseType));
-                        newFieldScripts.Add($"{dataFieldName}{GetSqlDataType(dataEntityField, options)}{GetFieldNullable(dataEntityField, options)}{GetSqlDefaultValue(dataEntityField, migrationInfo)}");
+                        var dataFieldName = SQLiteManager.WrapKeyword(dataEntityField.GetFieldName(DatabaseType), DatabaseObjectNameType.ColumnName);
+                        newFieldScripts.Add($"{dataFieldName}{GetFieldDefinition(dataEntityField, migrationInfo)}");
+                        hasIncrementField |= dataEntityField.InRole(FieldRole.Increment);
                         if (dataEntityField.InRole(FieldRole.PrimaryKey))
                         {
                             primaryKeyNames.Add($"{dataFieldName} ASC");
                         }
                     }
+                }
+                if (hasIncrementField)
+                {
+                    primaryKeyNames.Clear();
                 }
                 foreach (var tableName in newTableInfo.TableNames)
                 {
@@ -438,6 +453,166 @@ namespace Sixnet.Database.SQLite
 
                     // Log script
                     LogExecutionStatement(createTableStatement);
+                }
+            }
+            return statements;
+        }
+
+        #endregion
+
+        #region Get add filed statements
+
+        /// <summary>
+        /// Get create field statement
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override List<ExecutionDatabaseStatement> GetAddFieldStatements(MigrationDatabaseCommand migrationCommand)
+        {
+            if (migrationCommand?.MigrationInfo?.NewFields.IsNullOrEmpty() ?? true)
+            {
+                return new List<ExecutionDatabaseStatement>(0);
+            }
+
+            var statements = new List<ExecutionDatabaseStatement>();
+            foreach (var tableItem in migrationCommand.MigrationInfo.NewFields)
+            {
+                if (!tableItem.Value.IsNullOrEmpty())
+                {
+                    foreach (var field in tableItem.Value)
+                    {
+                        var dataFieldName = field.GetFieldName(DatabaseType);
+                        var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{tableItem.Key}') WHERE NAME='{dataFieldName}' COLLATE NOCASE;";
+                        var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
+                        if (!hasColumn)
+                        {
+                            var newFieldStatement = new ExecutionDatabaseStatement()
+                            {
+                                Script = $"ALTER TABLE {tableItem.Key} ADD COLUMN {WrapKeywordFunc(dataFieldName, DatabaseObjectNameType.ColumnName)}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
+                            };
+                            statements.Add(newFieldStatement);
+                            // Log script
+                            LogExecutionStatement(newFieldStatement);
+                        }
+                    }
+                }
+            }
+            return statements;
+        }
+
+        #endregion
+
+        #region Get delete filed statements
+
+        protected override List<ExecutionDatabaseStatement> GetDeleteFieldStatements(MigrationDatabaseCommand migrationCommand)
+        {
+            if (migrationCommand?.MigrationInfo?.DeletableFields.IsNullOrEmpty() ?? true)
+            {
+                return new List<ExecutionDatabaseStatement>(0);
+            }
+
+            var statements = new List<ExecutionDatabaseStatement>();
+            foreach (var tableItem in migrationCommand.MigrationInfo.DeletableFields)
+            {
+                if (!tableItem.Value.IsNullOrEmpty())
+                {
+                    foreach (var field in tableItem.Value)
+                    {
+                        var dataFieldName = field.GetFieldName(DatabaseType);
+                        var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{tableItem.Key}') WHERE NAME='{dataFieldName}' COLLATE NOCASE;";
+                        var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
+                        if (hasColumn)
+                        {
+                            var deleteStatement = new ExecutionDatabaseStatement()
+                            {
+                                Script = $"ALTER TABLE {tableItem.Key} DROP COLUMN {WrapKeywordFunc(dataFieldName, DatabaseObjectNameType.ColumnName)};"
+                            };
+                            statements.Add(deleteStatement);
+                            // Log script
+                            LogExecutionStatement(deleteStatement);
+                        }
+                    }
+                }
+            }
+            return statements;
+        }
+
+        #endregion
+
+        #region Get update field statements 
+
+        protected override List<ExecutionDatabaseStatement> GetUpdateFieldStatements(MigrationDatabaseCommand migrationCommand)
+        {
+            if (migrationCommand?.MigrationInfo?.UpdatableFields.IsNullOrEmpty() ?? true)
+            {
+                return new List<ExecutionDatabaseStatement>(0);
+            }
+
+            var statements = new List<ExecutionDatabaseStatement>();
+            foreach (var tableItem in migrationCommand.MigrationInfo.UpdatableFields)
+            {
+                if (tableItem.Value.IsNullOrEmpty())
+                {
+                    continue;
+                }
+                foreach (var fieldItem in tableItem.Value)
+                {
+                    var field = fieldItem.Value;
+                    var nowFieldName = fieldItem.Key;
+                    var newFieldName = field.GetFieldName(DatabaseType);
+                    var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{tableItem.Key}') WHERE NAME='{nowFieldName}' COLLATE NOCASE;";
+                    var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
+                    if (hasColumn)
+                    {
+                        var updateStatement = new ExecutionDatabaseStatement()
+                        {
+                            Script = $"ALTER TABLE {tableItem.Key} ALTER COLUMN {WrapKeywordFunc(nowFieldName, DatabaseObjectNameType.ColumnName)}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
+                        };
+                        statements.Add(updateStatement);
+                        LogExecutionStatement(updateStatement);
+                        if (!string.Equals(nowFieldName, newFieldName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var renameStatement = new ExecutionDatabaseStatement()
+                            {
+                                Script = $"ALTER TABLE {tableItem.Key} RENAME COLUMN {WrapKeywordFunc(nowFieldName, DatabaseObjectNameType.ColumnName)} TO {WrapKeywordFunc(newFieldName, DatabaseObjectNameType.ColumnName)};"
+                            };
+                            statements.Add(renameStatement);
+                            LogExecutionStatement(renameStatement);
+                        }
+                    }
+                }
+            }
+            return statements;
+        }
+
+        #endregion
+
+        #region Get rename table statements
+
+        protected override List<ExecutionDatabaseStatement> GetRenameTableStatements(MigrationDatabaseCommand migrationCommand)
+        {
+            var migrationInfo = migrationCommand?.MigrationInfo;
+            if (migrationInfo?.RenameTables.IsNullOrEmpty() ?? true)
+            {
+                return new List<ExecutionDatabaseStatement>(0);
+            }
+            var renameTables = migrationInfo.RenameTables;
+            var statements = new List<ExecutionDatabaseStatement>();
+            var options = migrationCommand.MigrationInfo;
+            foreach (var tableItem in renameTables)
+            {
+                var hasTableScript = $"SELECT COUNT(*) FROM SQLITE_MASTER WHERE TYPE = 'TABLE' COLLATE NOCASE AND NAME = '{tableItem.Key}' COLLATE NOCASE;";
+                var hasTable = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(hasTableScript) > 0;
+                if (hasTable)
+                {
+                    var renameTableStatement = new ExecutionDatabaseStatement()
+                    {
+                        Script = $"ALTER TABLE {tableItem.Key} RENAME TO {tableItem.Value};"
+                    };
+                    statements.Add(renameTableStatement);
+
+                    // Log script
+                    LogExecutionStatement(renameTableStatement);
                 }
             }
             return statements;
@@ -525,6 +700,26 @@ namespace Sixnet.Database.SQLite
                     throw new NotSupportedException(dbType.ToString());
             }
             return dbTypeName;
+        }
+
+        #endregion
+
+        #region Get field identity
+
+        /// <summary>
+        /// Get field identity
+        /// </summary>
+        /// <param name="field">Field</param>
+        /// <param name="options">Options</param>
+        /// <returns></returns>
+        protected override string GetFieldIdentity(DataField field, MigrationInfo options)
+        {
+            SixnetDirectThrower.ThrowArgNullIf(field == null, nameof(field));
+            if (!field.InRole(FieldRole.Increment))
+            {
+                return string.Empty;
+            }
+            return " PRIMARY KEY AUTOINCREMENT";
         }
 
         #endregion

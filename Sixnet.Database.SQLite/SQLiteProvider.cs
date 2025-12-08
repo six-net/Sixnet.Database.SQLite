@@ -20,7 +20,7 @@ namespace Sixnet.Database.SQLite
 
         public SQLiteProvider()
         {
-            queryDatabaseTablesScript = "SELECT NAME AS TableName FROM SQLITE_MASTER WHERE TYPE='table' AND NAME NOT LIKE 'sqlite_%';";
+            queryTablesScript = "SELECT NAME FROM SQLITE_MASTER WHERE TYPE='table' COLLATE NOCASE AND NAME NOT LIKE 'sqlite_%';";
         }
 
         #endregion
