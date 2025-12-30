@@ -16,31 +16,9 @@ namespace Sixnet.Database.SQLite
         #region Fields
 
         /// <summary>
-        /// Gets current database server type
-        /// </summary>
-        internal const DatabaseType CurrentDatabaseServerType = DatabaseType.SQLite;
-
-        /// <summary>
-        /// Key word prefix
-        /// </summary>
-        internal const string KeywordPrefix = "`";
-
-        /// <summary>
-        /// Key word suffix
-        /// </summary>
-        internal const string KeywordSuffix = "`";
-
-        /// <summary>
         /// Default query translator
         /// </summary>
-        static readonly SQLiteDataCommandResolver DefaultResolver = new SQLiteDataCommandResolver();
-
-        ///// <summary>
-        ///// Sqlite connections
-        ///// </summary>
-        //static ConcurrentDictionary<string, IDbConnection> Connections = new ConcurrentDictionary<string, IDbConnection>();
-
-        //internal static readonly ConcurrentDictionary<string, object> ServerLocks = new ConcurrentDictionary<string, object>();
+        internal static readonly SQLiteDataCommandResolver DefaultResolver = new();
 
         #endregion
 
@@ -55,29 +33,6 @@ namespace Sixnet.Database.SQLite
         {
             var conn = SixnetDataManager.GetDatabaseConnection(server) ?? RegisterCustomFunctions(new SqliteConnection(SixnetDataManager.ResolveConnectionString(server)));
             return conn;
-        }
-
-        #endregion
-
-        #region Format keyword
-
-        internal static string FormatKeyword(string originalValue, DatabaseObjectNameType nameType)
-        {
-            return SixnetDataManager.FormatDatabaseWordAndName(CurrentDatabaseServerType, originalValue);
-        }
-
-        #endregion
-
-        #region Wrap keyword
-
-        /// <summary>
-        /// Wrap keyword by the KeywordPrefix and the KeywordSuffix
-        /// </summary>
-        /// <param name="originalValue">Original value</param>
-        /// <returns></returns>
-        internal static string WrapKeyword(string originalValue, DatabaseObjectNameType nameType)
-        {
-            return nameType == DatabaseObjectNameType.ColumnName ? $"{KeywordPrefix}{originalValue}{KeywordSuffix}" : originalValue;
         }
 
         #endregion

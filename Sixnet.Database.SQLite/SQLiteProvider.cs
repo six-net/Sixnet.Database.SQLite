@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+
 using Microsoft.Data.Sqlite;
+
 using Sixnet.Development.Data.Command;
 using Sixnet.Development.Data.Dapper;
 using Sixnet.Development.Data.Database;
@@ -37,6 +39,21 @@ namespace Sixnet.Database.SQLite
             return SQLiteManager.GetConnection(server);
         }
 
+        /// <summary>
+        /// Get db connection meta
+        /// </summary>
+        /// <param name="connection"></param>
+        /// <returns></returns>
+        public override DatabaseConnectionMeta GetDbConnectionMeta(IDbConnection connection)
+        {
+            var sqlBuilder = new SqliteConnectionStringBuilder(connection.ConnectionString);
+            return new DatabaseConnectionMeta()
+            {
+                DataSource = sqlBuilder.DataSource,
+                DatabaseName = sqlBuilder.DataSource,
+            };
+        }
+
         #endregion
 
         #region Command resolver
@@ -61,7 +78,7 @@ namespace Sixnet.Database.SQLite
         /// <returns></returns>
         protected override DynamicParameters ConvertDataCommandParameters(DataCommandParameters parameters)
         {
-            return parameters?.ConvertToDynamicParameters(SQLiteManager.CurrentDatabaseServerType);
+            return parameters?.ConvertToDynamicParameters(SQLiteManager.GetCommandResolver().DatabaseType);
         }
 
         #endregion
@@ -94,7 +111,7 @@ namespace Sixnet.Database.SQLite
                 }
 
                 command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-                ({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
+                ({string.Join(",", columns.Select(c => $"{SQLiteManager.DefaultResolver.KeywordPrefix}{c}{SQLiteManager.DefaultResolver.KeywordSuffix}"))}) 
                 VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
 
                 foreach (DataRow row in dataTable.Rows)
@@ -138,7 +155,7 @@ namespace Sixnet.Database.SQLite
                 }
 
                 command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-                ({string.Join(",", columns.Select(c => $"{SQLiteManager.KeywordPrefix}{c}{SQLiteManager.KeywordSuffix}"))}) 
+                ({string.Join(",", columns.Select(c => $"{SQLiteManager.DefaultResolver.KeywordPrefix}{c}{SQLiteManager.DefaultResolver.KeywordSuffix}"))}) 
                 VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
 
                 foreach (DataRow row in dataTable.Rows)
