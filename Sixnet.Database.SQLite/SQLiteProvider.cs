@@ -16,7 +16,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Imeplements database provider for the SQLite
     /// </summary>
-    public class SQLiteProvider : BaseDatabaseProvider
+    public class SQLiteProvider : SixnetBaseDatabaseProvider
     {
         #region Constructor
 
@@ -34,7 +34,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns></returns>
-        public override IDbConnection GetDbConnection(DatabaseServer server)
+        public override IDbConnection GetDbConnection(SixnetDatabaseServer server)
         {
             return SQLiteManager.GetConnection(server);
         }
@@ -44,10 +44,10 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="connection"></param>
         /// <returns></returns>
-        public override DatabaseConnectionMeta GetDbConnectionMeta(IDbConnection connection)
+        public override SixnetDatabaseConnectionMeta GetDbConnectionMeta(IDbConnection connection)
         {
             var sqlBuilder = new SqliteConnectionStringBuilder(connection.ConnectionString);
-            return new DatabaseConnectionMeta()
+            return new SixnetDatabaseConnectionMeta()
             {
                 DataSource = sqlBuilder.DataSource,
                 DatabaseName = sqlBuilder.DataSource,
@@ -76,7 +76,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="parameters">Data command parameters</param>
         /// <returns></returns>
-        protected override DynamicParameters ConvertDataCommandParameters(DataCommandParameters parameters)
+        protected override DynamicParameters ConvertDataCommandParameters(SixnetDataCommandParameters parameters)
         {
             return parameters?.ConvertToDynamicParameters(SQLiteManager.GetCommandResolver().DatabaseType);
         }
@@ -89,12 +89,12 @@ namespace Sixnet.Database.SQLite
         /// Bulk insert datas
         /// </summary>
         /// <param name="databaseBulkInsertCommand">Database command</param>
-        public override async Task BulkInsertAsync(BulkInsertDatabaseCommand databaseBulkInsertCommand)
+        public override async Task BulkInsertAsync(SixnetBulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
             try
             {
                 var dataTable = databaseBulkInsertCommand.DataTable;
-                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
+                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(SixnetBulkInsertDatabaseCommand.DataTable));
                 var sqliteResolver = new SQLiteDataCommandResolver();
                 var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
                 var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
@@ -133,12 +133,12 @@ namespace Sixnet.Database.SQLite
         /// Bulk insert datas
         /// </summary>
         /// <param name="databaseBulkInsertCommand">Database command</param>
-        public override void BulkInsert(BulkInsertDatabaseCommand databaseBulkInsertCommand)
+        public override void BulkInsert(SixnetBulkInsertDatabaseCommand databaseBulkInsertCommand)
         {
             try
             {
                 var dataTable = databaseBulkInsertCommand.DataTable;
-                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(BulkInsertDatabaseCommand.DataTable));
+                SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(SixnetBulkInsertDatabaseCommand.DataTable));
                 var sqliteResolver = new SQLiteDataCommandResolver();
                 var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
                 var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;

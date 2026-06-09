@@ -18,7 +18,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Defines command resolver for sqlite
     /// </summary>
-    internal partial class SQLiteDataCommandResolver : BaseDataCommandResolver
+    internal partial class SQLiteDataCommandResolver : SixnetBaseDataCommandResolver
     {
         #region Constructor
 
@@ -26,7 +26,7 @@ namespace Sixnet.Database.SQLite
         {
             KeywordPrefix = "`";
             KeywordSuffix = "`";
-            DatabaseType = DatabaseType.SQLite;
+            DatabaseType = SixnetDatabaseType.SQLite;
             DefaultFieldFormatter = new SQLiteDefaultFieldFormatter();
             ParameterPrefix = "@";
             RecursiveKeyword = "WITH RECURSIVE";
@@ -65,17 +65,17 @@ namespace Sixnet.Database.SQLite
         /// <param name="translationResult">Queryable translation result</param>
         /// <param name="location">Queryable location</param>
         /// <returns></returns>
-        protected override QueryDatabaseStatement GenerateQueryStatementCore(DataCommandResolveContext context, QueryableTranslationResult translationResult, QueryableLocation location)
+        protected override SixnetQueryDatabaseStatement GenerateQueryStatementCore(SixnetDataCommandResolveContext context, SixnetQueryableTranslationResult translationResult, SixnetQueryableLocation location)
         {
             var queryable = translationResult.GetOriginalQueryable();
             string sqlStatement;
             IEnumerable<ISixnetField> outputFields = null;
             switch (queryable.ExecutionMode)
             {
-                case QueryableExecutionMode.Script:
+                case SixnetQueryableExecutionMode.Script:
                     sqlStatement = translationResult.GetCondition();
                     break;
-                case QueryableExecutionMode.Regular:
+                case SixnetQueryableExecutionMode.Regular:
                 default:
                     // table pet name
                     var tablePetName = context.GetTablePetName(queryable, queryable.GetModelType());
@@ -117,21 +117,21 @@ namespace Sixnet.Database.SQLite
                     {
                         outputFields = SixnetDataManager.GetQueryableFields(DatabaseType, queryable.GetModelType(), queryable, context.IsRootQueryable(queryable));
                     }
-                    var outputFieldString = FormatFieldsString(context, queryable, location, FieldLocation.Output, outputFields);
+                    var outputFieldString = FormatFieldsString(context, queryable, location, SixnetFieldLocation.Output, outputFields);
                     //pre script
                     var preScript = GetPreScript(context, location);
                     //statement
                     sqlStatement = $"SELECT{GetDistinctString(queryable)} {outputFieldString} FROM {targetScript}{sort}{limit}";
                     switch (queryable.OutputType)
                     {
-                        case QueryableOutputType.Count:
+                        case SixnetQueryableOutputType.Count:
                             sqlStatement = hasCombine
                                 ? hasSort
                                     ? $"{preScript}SELECT COUNT(1) FROM ((SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine}){TablePetNameKeyword}{tablePetName}"
                                     : $"{preScript}SELECT COUNT(1) FROM (({sqlStatement}){combine}){TablePetNameKeyword}{tablePetName}"
                                 : $"{preScript}SELECT COUNT(1) FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}";
                             break;
-                        case QueryableOutputType.Predicate:
+                        case SixnetQueryableOutputType.Predicate:
                             sqlStatement = hasCombine
                                 ? hasSort
                                     ? $"{preScript}SELECT 1 WHERE EXISTS((SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine})"
@@ -153,12 +153,12 @@ namespace Sixnet.Database.SQLite
             var parameters = context.GetParameters();
 
             //log script
-            if (location == QueryableLocation.Top)
+            if (location == SixnetQueryableLocation.Top)
             {
                 LogScript(sqlStatement, parameters);
             }
 
-            return QueryDatabaseStatement.Create(sqlStatement, parameters, outputFields);
+            return SixnetQueryDatabaseStatement.Create(sqlStatement, parameters, outputFields);
         }
 
         #endregion
@@ -170,7 +170,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateInsertStatements(DataCommandResolveContext context)
+        protected override List<SixnetExecutionDatabaseStatement> GenerateInsertStatements(SixnetDataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
@@ -179,16 +179,16 @@ namespace Sixnet.Database.SQLite
             var fieldCount = fields.GetCount();
             var insertFields = new List<string>(fieldCount);
             var insertValues = new List<string>(fieldCount);
-            DataField autoIncrementField = null;
-            DataField splitField = null;
+            SixnetDataField autoIncrementField = null;
+            SixnetDataField splitField = null;
             dynamic splitValue = default;
 
             foreach (var field in fields)
             {
-                if (field.InRole(FieldRole.Increment))
+                if (field.InRole(SixnetFieldRole.Increment))
                 {
                     autoIncrementField ??= field;
-                    if (!autoIncrementField.InRole(FieldRole.PrimaryKey) && field.InRole(FieldRole.PrimaryKey)) // get first primary key field
+                    if (!autoIncrementField.InRole(SixnetFieldRole.PrimaryKey) && field.InRole(SixnetFieldRole.PrimaryKey)) // get first primary key field
                     {
                         autoIncrementField = field;
                     }
@@ -198,13 +198,13 @@ namespace Sixnet.Database.SQLite
                     }
                 }
                 // fields
-                insertFields.Add(FormatAndWrapObjectName(field.GetFieldName(DatabaseType), DatabaseObjectType.Column));
+                insertFields.Add(FormatAndWrapObjectName(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
                 // values
                 var insertValue = command.FieldsAssignment.GetNewValue(field.PropertyName);
                 insertValues.Add(FormatInsertValueField(context, command.Queryable, insertValue));
 
                 // split value
-                if (field.InRole(FieldRole.SplitValue))
+                if (field.InRole(SixnetFieldRole.SplitValue))
                 {
                     splitValue = insertValue;
                     splitField = field;
@@ -232,9 +232,9 @@ namespace Sixnet.Database.SQLite
                 var incrField = $"{command.Id}";
                 statementBuilder.AppendLine($"SELECT LAST_INSERT_ROWID() {ColumnPetNameKeyword} {incrField};");
             }
-            return new List<ExecutionDatabaseStatement>(1)
+            return new List<SixnetExecutionDatabaseStatement>(1)
             {
-                new ExecutionDatabaseStatement()
+                new SixnetExecutionDatabaseStatement()
                 {
                     Script = statementBuilder.ToString(),
                     ScriptType = GetCommandType(command),
@@ -253,7 +253,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateUpdateStatements(DataCommandResolveContext context)
+        protected override List<SixnetExecutionDatabaseStatement> GenerateUpdateStatements(SixnetDataCommandResolveContext context)
         {
             var command = context.DataCommandExecutionContext.Command;
             SixnetException.ThrowIf(command?.FieldsAssignment?.NewValues.IsNullOrEmpty() ?? true, "No set update field");
@@ -277,9 +277,9 @@ namespace Sixnet.Database.SQLite
             {
                 var newValue = newValueItem.Value;
                 var propertyName = newValueItem.Key;
-                var updateField = SixnetDataManager.GetField(dataCommandExecutionContext.Server.DatabaseType, command.GetEntityType(), DataField.Create(propertyName)) as DataField;
+                var updateField = SixnetDataManager.GetField(dataCommandExecutionContext.Server.DatabaseType, command.GetEntityType(), SixnetDataField.Create(propertyName)) as SixnetDataField;
                 SixnetDirectThrower.ThrowSixnetExceptionIf(updateField == null, $"Not found field:{propertyName}");
-                var fieldFormattedName = FormatAndWrapObjectName(updateField.GetFieldName(DatabaseType), DatabaseObjectType.Column);
+                var fieldFormattedName = FormatAndWrapObjectName(updateField.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column);
                 var newValueExpression = FormatUpdateValueField(context, command, newValue);
                 updateSetArray.Add($"{fieldFormattedName}={newValueExpression}");
             }
@@ -297,20 +297,20 @@ namespace Sixnet.Database.SQLite
                 var primaryKeyFields = SixnetDataManager.GetFields(DatabaseType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
-                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
-                var queryStatement = GenerateQueryStatementCore(context, translationResult, QueryableLocation.UsingSource);
+                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, SixnetQueryableLocation.Top, SixnetFieldLocation.Criterion, tablePetName: tablePetName)));
+                var queryStatement = GenerateQueryStatementCore(context, translationResult, SixnetQueryableLocation.UsingSource);
                 scriptTemplate = $"UPDATE {{0}}{TablePetNameKeyword}{tablePetName} SET {string.Join(",", updateSetArray)} WHERE {primaryKeyString} IN (SELECT {primaryKeyString} FROM ({queryStatement.Script}){TablePetNameKeyword}{tablePetName});";
             }
 
             // parameters
-            var parameters = ConvertParameter(command.ScriptParameters) ?? new DataCommandParameters();
+            var parameters = ConvertParameter(command.ScriptParameters) ?? new SixnetDataCommandParameters();
             parameters.Union(context.GetParameters());
 
             // statements
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new ExecutionDatabaseStatement()
+                statements.Add(new SixnetExecutionDatabaseStatement()
                 {
                     Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName)),
                     ScriptType = GetCommandType(command),
@@ -334,7 +334,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="context">Command resolve context</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GenerateDeleteStatements(DataCommandResolveContext context)
+        protected override List<SixnetExecutionDatabaseStatement> GenerateDeleteStatements(SixnetDataCommandResolveContext context)
         {
             var dataCommandExecutionContext = context.DataCommandExecutionContext;
             var command = dataCommandExecutionContext.Command;
@@ -365,20 +365,20 @@ namespace Sixnet.Database.SQLite
                 var primaryKeyFields = SixnetDataManager.GetFields(DatabaseType, entityType, SixnetEntityManager.GetPrimaryKeyFields(entityType));
                 SixnetException.ThrowIf(primaryKeyFields.IsNullOrEmpty(), $"{entityType?.FullName} not set primary key fields");
 
-                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, QueryableLocation.Top, FieldLocation.Criterion, tablePetName: tablePetName)));
-                var queryStatement = GenerateQueryStatementCore(context, translationResult, QueryableLocation.UsingSource);
+                var primaryKeyString = string.Join("||", primaryKeyFields.Select(pk => FormatField(context, command.Queryable, pk, SixnetQueryableLocation.Top, SixnetFieldLocation.Criterion, tablePetName: tablePetName)));
+                var queryStatement = GenerateQueryStatementCore(context, translationResult, SixnetQueryableLocation.UsingSource);
                 scriptTemplate = $"DELETE FROM {{0}}{TablePetNameKeyword}{tablePetName} WHERE {primaryKeyString} IN (SELECT {primaryKeyString} FROM ({queryStatement.Script}){TablePetNameKeyword}{tablePetName});";
             }
 
             // parameters
-            var parameters = ConvertParameter(command.ScriptParameters) ?? new DataCommandParameters();
+            var parameters = ConvertParameter(command.ScriptParameters) ?? new SixnetDataCommandParameters();
             parameters.Union(context.GetParameters());
 
             // statement
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new ExecutionDatabaseStatement()
+                statements.Add(new SixnetExecutionDatabaseStatement()
                 {
                     Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName)),
                     ScriptType = GetCommandType(command),
@@ -402,15 +402,15 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="migrationCommand">Migration command</param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GetCreateTableStatements(MigrationDatabaseCommand migrationCommand)
+        protected override List<SixnetExecutionDatabaseStatement> GetCreateTableStatements(SixnetMigrationDatabaseCommand migrationCommand)
         {
             var migrationInfo = migrationCommand.MigrationInfo;
             if (migrationInfo?.NewTables.IsNullOrEmpty() ?? true)
             {
-                return new List<ExecutionDatabaseStatement>(0);
+                return new List<SixnetExecutionDatabaseStatement>(0);
             }
             var newTables = migrationInfo.NewTables;
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var newTableInfo in newTables)
             {
                 if (newTableInfo?.EntityType == null || (newTableInfo?.TableNames.IsNullOrEmpty() ?? true))
@@ -427,12 +427,12 @@ namespace Sixnet.Database.SQLite
                 foreach (var field in entityConfig.AllFields)
                 {
                     var dataField = SixnetDataManager.GetField(DatabaseType, entityType, field.Value);
-                    if (dataField is DataField dataEntityField)
+                    if (dataField is SixnetDataField dataEntityField)
                     {
-                        var dataFieldName = FormatAndWrapObjectName(DatabaseObjectName.Create(dataEntityField.GetFieldName(DatabaseType), DatabaseObjectType.Column));
+                        var dataFieldName = FormatAndWrapObjectName(SixnetDatabaseObjectName.Create(dataEntityField.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
                         newFieldScripts.Add($"{dataFieldName}{GetFieldDefinition(dataEntityField, migrationInfo)}");
-                        hasIncrementField |= dataEntityField.InRole(FieldRole.Increment);
-                        if (dataEntityField.InRole(FieldRole.PrimaryKey))
+                        hasIncrementField |= dataEntityField.InRole(SixnetFieldRole.Increment);
+                        if (dataEntityField.InRole(SixnetFieldRole.PrimaryKey))
                         {
                             primaryKeyNames.Add($"{dataFieldName} ASC");
                         }
@@ -445,7 +445,7 @@ namespace Sixnet.Database.SQLite
                 foreach (var table in newTableInfo.TableNames)
                 {
                     var formattedTableName = FormatAndWrapObjectName(table);
-                    var createTableStatement = new ExecutionDatabaseStatement()
+                    var createTableStatement = new SixnetExecutionDatabaseStatement()
                     {
                         Script = $"CREATE TABLE IF NOT EXISTS {formattedTableName} ({string.Join(",", newFieldScripts)}{(primaryKeyNames.IsNullOrEmpty() ? "" : ", PRIMARY KEY (" + string.Join(",", primaryKeyNames) + ")")});"
                     };
@@ -467,14 +467,14 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="migrationCommand"></param>
         /// <returns></returns>
-        protected override List<ExecutionDatabaseStatement> GetAddFieldStatements(MigrationDatabaseCommand migrationCommand)
+        protected override List<SixnetExecutionDatabaseStatement> GetAddFieldStatements(SixnetMigrationDatabaseCommand migrationCommand)
         {
             if (migrationCommand?.MigrationInfo?.NewFields.IsNullOrEmpty() ?? true)
             {
-                return new List<ExecutionDatabaseStatement>(0);
+                return new List<SixnetExecutionDatabaseStatement>(0);
             }
 
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var table in migrationCommand.MigrationInfo.NewFields)
             {
                 if (!table.Value.IsNullOrEmpty())
@@ -482,12 +482,12 @@ namespace Sixnet.Database.SQLite
                     var formattedTableName = FormatAndWrapObjectName(table.Key);
                     foreach (var field in table.Value)
                     {
-                        var dataFieldName = FormatObjectName(DatabaseObjectName.Create(field.GetFieldName(DatabaseType), DatabaseObjectType.Column));
+                        var dataFieldName = FormatObjectName(SixnetDatabaseObjectName.Create(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
                         var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{formattedTableName}') WHERE NAME='{dataFieldName.Name}' COLLATE NOCASE;";
                         var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
                         if (!hasColumn)
                         {
-                            var newFieldStatement = new ExecutionDatabaseStatement()
+                            var newFieldStatement = new SixnetExecutionDatabaseStatement()
                             {
                                 Script = $"ALTER TABLE {formattedTableName} ADD COLUMN {WrapObjectName(dataFieldName).Name}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
                             };
@@ -505,14 +505,14 @@ namespace Sixnet.Database.SQLite
 
         #region Get delete filed statements
 
-        protected override List<ExecutionDatabaseStatement> GetDeleteFieldStatements(MigrationDatabaseCommand migrationCommand)
+        protected override List<SixnetExecutionDatabaseStatement> GetDeleteFieldStatements(SixnetMigrationDatabaseCommand migrationCommand)
         {
             if (migrationCommand?.MigrationInfo?.DeletableFields.IsNullOrEmpty() ?? true)
             {
-                return new List<ExecutionDatabaseStatement>(0);
+                return new List<SixnetExecutionDatabaseStatement>(0);
             }
 
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var table in migrationCommand.MigrationInfo.DeletableFields)
             {
                 if (!table.Value.IsNullOrEmpty())
@@ -520,12 +520,12 @@ namespace Sixnet.Database.SQLite
                     var formattedTableName = FormatAndWrapObjectName(table.Key);
                     foreach (var field in table.Value)
                     {
-                        var dataFieldName = FormatObjectName(DatabaseObjectName.Create(field.GetFieldName(DatabaseType), DatabaseObjectType.Column));
+                        var dataFieldName = FormatObjectName(SixnetDatabaseObjectName.Create(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
                         var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{formattedTableName}') WHERE NAME='{dataFieldName.Name}' COLLATE NOCASE;";
                         var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
                         if (hasColumn)
                         {
-                            var deleteStatement = new ExecutionDatabaseStatement()
+                            var deleteStatement = new SixnetExecutionDatabaseStatement()
                             {
                                 Script = $"ALTER TABLE {formattedTableName} DROP COLUMN {WrapObjectName(dataFieldName).Name};"
                             };
@@ -543,14 +543,14 @@ namespace Sixnet.Database.SQLite
 
         #region Get update field statements 
 
-        protected override List<ExecutionDatabaseStatement> GetUpdateFieldStatements(MigrationDatabaseCommand migrationCommand)
+        protected override List<SixnetExecutionDatabaseStatement> GetUpdateFieldStatements(SixnetMigrationDatabaseCommand migrationCommand)
         {
             if (migrationCommand?.MigrationInfo?.UpdatableFields.IsNullOrEmpty() ?? true)
             {
-                return new List<ExecutionDatabaseStatement>(0);
+                return new List<SixnetExecutionDatabaseStatement>(0);
             }
 
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var table in migrationCommand.MigrationInfo.UpdatableFields)
             {
                 if (table.Value.IsNullOrEmpty())
@@ -562,22 +562,22 @@ namespace Sixnet.Database.SQLite
                 {
                     var field = fieldItem.Value;
                     var nowFieldName = fieldItem.Key;
-                    var newFieldName = FormatObjectName(DatabaseObjectName.Create(field.GetFieldName(DatabaseType), DatabaseObjectType.Column));
+                    var newFieldName = FormatObjectName(SixnetDatabaseObjectName.Create(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
                     var existScript = $"SELECT COUNT(*) FROM PRAGMA_TABLE_INFO('{formattedTableName}') WHERE NAME='{nowFieldName}' COLLATE NOCASE;";
                     var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
                     if (hasColumn)
                     {
-                        var updateStatement = new ExecutionDatabaseStatement()
+                        var updateStatement = new SixnetExecutionDatabaseStatement()
                         {
-                            Script = $"ALTER TABLE {formattedTableName} ALTER COLUMN {WrapObjectName(DatabaseObjectName.Create(nowFieldName, DatabaseObjectType.Column)).Name}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
+                            Script = $"ALTER TABLE {formattedTableName} ALTER COLUMN {WrapObjectName(SixnetDatabaseObjectName.Create(nowFieldName, SixnetDatabaseObjectType.Column)).Name}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
                         };
                         statements.Add(updateStatement);
                         LogExecutionStatement(updateStatement);
                         if (!string.Equals(nowFieldName, newFieldName.Name, StringComparison.OrdinalIgnoreCase))
                         {
-                            var renameStatement = new ExecutionDatabaseStatement()
+                            var renameStatement = new SixnetExecutionDatabaseStatement()
                             {
-                                Script = $"ALTER TABLE {formattedTableName} RENAME COLUMN {WrapObjectName(DatabaseObjectName.Create(nowFieldName, DatabaseObjectType.Column)).Name} TO {WrapObjectName(newFieldName).Name};"
+                                Script = $"ALTER TABLE {formattedTableName} RENAME COLUMN {WrapObjectName(SixnetDatabaseObjectName.Create(nowFieldName, SixnetDatabaseObjectType.Column)).Name} TO {WrapObjectName(newFieldName).Name};"
                             };
                             statements.Add(renameStatement);
                             LogExecutionStatement(renameStatement);
@@ -592,15 +592,15 @@ namespace Sixnet.Database.SQLite
 
         #region Get rename table statements
 
-        protected override List<ExecutionDatabaseStatement> GetRenameTableStatements(MigrationDatabaseCommand migrationCommand)
+        protected override List<SixnetExecutionDatabaseStatement> GetRenameTableStatements(SixnetMigrationDatabaseCommand migrationCommand)
         {
             var migrationInfo = migrationCommand?.MigrationInfo;
             if (migrationInfo?.RenameTables.IsNullOrEmpty() ?? true)
             {
-                return new List<ExecutionDatabaseStatement>(0);
+                return new List<SixnetExecutionDatabaseStatement>(0);
             }
             var renameTables = migrationInfo.RenameTables;
-            var statements = new List<ExecutionDatabaseStatement>();
+            var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var table in renameTables)
             {
                 var oldFormattedTableName = FormatAndWrapObjectName(table.Key);
@@ -610,7 +610,7 @@ namespace Sixnet.Database.SQLite
                 var hasTable = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(hasTableScript) > 0;
                 if (hasTable)
                 {
-                    var renameTableStatement = new ExecutionDatabaseStatement()
+                    var renameTableStatement = new SixnetExecutionDatabaseStatement()
                     {
                         Script = $"ALTER TABLE {oldFormattedTableName} RENAME TO {newFormattedTableName};"
                     };
@@ -656,7 +656,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="field">Field</param>
         /// <returns></returns>
-        protected override string GetSqlDataType(DataField field, MigrationInfo options)
+        protected override string GetSqlDataType(SixnetDataField field, SixnetMigrationInfo options)
         {
             SixnetDirectThrower.ThrowArgNullIf(field == null, nameof(field));
             if (!string.IsNullOrWhiteSpace(field.DbType))
@@ -717,10 +717,10 @@ namespace Sixnet.Database.SQLite
         /// <param name="field">Field</param>
         /// <param name="options">Options</param>
         /// <returns></returns>
-        protected override string GetFieldIdentity(DataField field, MigrationInfo options)
+        protected override string GetFieldIdentity(SixnetDataField field, SixnetMigrationInfo options)
         {
             SixnetDirectThrower.ThrowArgNullIf(field == null, nameof(field));
-            if (!field.InRole(FieldRole.Increment))
+            if (!field.InRole(SixnetFieldRole.Increment))
             {
                 return string.Empty;
             }

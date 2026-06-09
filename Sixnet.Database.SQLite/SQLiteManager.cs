@@ -29,7 +29,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="server">Database server</param>
         /// <returns>Return database connection</returns>
-        public static IDbConnection GetConnection(DatabaseServer server)
+        public static IDbConnection GetConnection(SixnetDatabaseServer server)
         {
             var conn = SixnetDataManager.GetDatabaseConnection(server) ?? RegisterCustomFunctions(new SqliteConnection(SixnetDataManager.ResolveConnectionString(server)));
             return conn;
