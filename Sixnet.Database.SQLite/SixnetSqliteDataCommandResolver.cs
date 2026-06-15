@@ -18,16 +18,16 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Defines command resolver for sqlite
     /// </summary>
-    internal partial class SQLiteDataCommandResolver : SixnetBaseDataCommandResolver
+    internal partial class SixnetSqliteDataCommandResolver : SixnetBaseDataCommandResolver
     {
         #region Constructor
 
-        public SQLiteDataCommandResolver()
+        public SixnetSqliteDataCommandResolver()
         {
             KeywordPrefix = "`";
             KeywordSuffix = "`";
             DatabaseType = SixnetDatabaseType.SQLite;
-            DefaultFieldFormatter = new SQLiteDefaultFieldFormatter();
+            DefaultFieldFormatter = new SixnetSqliteDefaultFieldFormatter();
             ParameterPrefix = "@";
             RecursiveKeyword = "WITH RECURSIVE";
             DbTypeDefaultValues = new Dictionary<DbType, string>()
@@ -479,7 +479,7 @@ namespace Sixnet.Database.SQLite
             {
                 if (!table.Value.IsNullOrEmpty())
                 {
-                    var formattedTableName = FormatAndWrapObjectName(table.Key);
+                    var formattedTableName = GetObjectFullName(FormatObjectName(table.Key));
                     foreach (var field in table.Value)
                     {
                         var dataFieldName = FormatObjectName(SixnetDatabaseObjectName.Create(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
@@ -517,7 +517,7 @@ namespace Sixnet.Database.SQLite
             {
                 if (!table.Value.IsNullOrEmpty())
                 {
-                    var formattedTableName = FormatAndWrapObjectName(table.Key);
+                    var formattedTableName = GetObjectFullName(FormatObjectName(table.Key));
                     foreach (var field in table.Value)
                     {
                         var dataFieldName = FormatObjectName(SixnetDatabaseObjectName.Create(field.GetFieldName(DatabaseType), SixnetDatabaseObjectType.Column));
@@ -557,7 +557,7 @@ namespace Sixnet.Database.SQLite
                 {
                     continue;
                 }
-                var formattedTableName = FormatAndWrapObjectName(table.Key);
+                var formattedTableName = GetObjectFullName(FormatObjectName(table.Key));
                 foreach (var fieldItem in table.Value)
                 {
                     var field = fieldItem.Value;
@@ -567,12 +567,12 @@ namespace Sixnet.Database.SQLite
                     var hasColumn = migrationCommand.Connection.DbConnection.ExecuteScalar<int>(existScript) > 0;
                     if (hasColumn)
                     {
-                        var updateStatement = new SixnetExecutionDatabaseStatement()
-                        {
-                            Script = $"ALTER TABLE {formattedTableName} ALTER COLUMN {WrapObjectName(SixnetDatabaseObjectName.Create(nowFieldName, SixnetDatabaseObjectType.Column)).Name}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
-                        };
-                        statements.Add(updateStatement);
-                        LogExecutionStatement(updateStatement);
+                        //var updateStatement = new SixnetExecutionDatabaseStatement()
+                        //{
+                        //    Script = $"ALTER TABLE {formattedTableName} ALTER COLUMN {WrapObjectName(SixnetDatabaseObjectName.Create(nowFieldName, SixnetDatabaseObjectType.Column)).Name}{GetFieldDefinition(field, migrationCommand.MigrationInfo)};"
+                        //};
+                        //statements.Add(updateStatement);
+                        //LogExecutionStatement(updateStatement);
                         if (!string.Equals(nowFieldName, newFieldName.Name, StringComparison.OrdinalIgnoreCase))
                         {
                             var renameStatement = new SixnetExecutionDatabaseStatement()

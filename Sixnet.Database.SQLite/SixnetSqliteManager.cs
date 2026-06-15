@@ -11,14 +11,14 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Defines sqlite manager
     /// </summary>
-    internal static class SQLiteManager
+    internal static class SixnetSqliteManager
     {
         #region Fields
 
         /// <summary>
         /// Default query translator
         /// </summary>
-        internal static readonly SQLiteDataCommandResolver DefaultResolver = new();
+        internal static readonly SixnetSqliteDataCommandResolver DefaultResolver = new();
 
         #endregion
 
@@ -43,7 +43,7 @@ namespace Sixnet.Database.SQLite
         /// Get command resolver
         /// </summary>
         /// <returns>Return a command resolver</returns>
-        internal static SQLiteDataCommandResolver GetCommandResolver()
+        internal static SixnetSqliteDataCommandResolver GetCommandResolver()
         {
             return DefaultResolver;
         }

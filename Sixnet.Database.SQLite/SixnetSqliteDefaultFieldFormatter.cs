@@ -10,7 +10,7 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Default field converter for sqlite
     /// </summary>
-    public class SQLiteDefaultFieldFormatter : ISixnetFieldFormatter
+    public class SixnetSqliteDefaultFieldFormatter : ISixnetFieldFormatter
     {
         static List<StringComparison> StringIgnoreCaseValues = new List<StringComparison>()
         {
@@ -33,7 +33,7 @@ namespace Sixnet.Database.SQLite
             {"tt", "%p"}
         };
         static Regex DateTimeFormatRegex = null;
-        static SQLiteDefaultFieldFormatter()
+        static SixnetSqliteDefaultFieldFormatter()
         {
             var sortedKeys = DateTimeFormatMap.Keys.OrderByDescending(k => k.Length);
             string pattern = string.Join("|", sortedKeys.Select(Regex.Escape));

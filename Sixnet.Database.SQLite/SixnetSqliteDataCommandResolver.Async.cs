@@ -11,7 +11,7 @@ using Sixnet.Exceptions;
 
 namespace Sixnet.Database.SQLite
 {
-    internal partial class SQLiteDataCommandResolver
+    internal partial class SixnetSqliteDataCommandResolver
     {
         #region Get query statement
 

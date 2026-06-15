@@ -16,11 +16,11 @@ namespace Sixnet.Database.SQLite
     /// <summary>
     /// Imeplements database provider for the SQLite
     /// </summary>
-    public class SQLiteProvider : SixnetBaseDatabaseProvider
+    public class SixnetSqliteProvider : SixnetBaseDatabaseProvider
     {
         #region Constructor
 
-        public SQLiteProvider()
+        public SixnetSqliteProvider()
         {
             queryTablesScript = "SELECT NAME FROM SQLITE_MASTER WHERE TYPE='table' COLLATE NOCASE AND NAME NOT LIKE 'sqlite_%';";
         }
@@ -36,7 +36,7 @@ namespace Sixnet.Database.SQLite
         /// <returns></returns>
         public override IDbConnection GetDbConnection(SixnetDatabaseServer server)
         {
-            return SQLiteManager.GetConnection(server);
+            return SixnetSqliteManager.GetConnection(server);
         }
 
         /// <summary>
@@ -64,7 +64,7 @@ namespace Sixnet.Database.SQLite
         /// <returns></returns>
         protected override ISixnetDataCommandResolver GetDataCommandResolver()
         {
-            return SQLiteManager.GetCommandResolver();
+            return SixnetSqliteManager.GetCommandResolver();
         }
 
         #endregion
@@ -78,7 +78,7 @@ namespace Sixnet.Database.SQLite
         /// <returns></returns>
         protected override DynamicParameters ConvertDataCommandParameters(SixnetDataCommandParameters parameters)
         {
-            return parameters?.ConvertToDynamicParameters(SQLiteManager.GetCommandResolver().DatabaseType);
+            return parameters?.ConvertToDynamicParameters(SixnetSqliteManager.GetCommandResolver().DatabaseType);
         }
 
         #endregion
@@ -95,7 +95,7 @@ namespace Sixnet.Database.SQLite
             {
                 var dataTable = databaseBulkInsertCommand.DataTable;
                 SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(SixnetBulkInsertDatabaseCommand.DataTable));
-                var sqliteResolver = new SQLiteDataCommandResolver();
+                var sqliteResolver = new SixnetSqliteDataCommandResolver();
                 var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
                 var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
                 var columns = new List<string>(dataTable.Columns.Count);
@@ -111,7 +111,7 @@ namespace Sixnet.Database.SQLite
                 }
 
                 command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-                ({string.Join(",", columns.Select(c => $"{SQLiteManager.DefaultResolver.KeywordPrefix}{c}{SQLiteManager.DefaultResolver.KeywordSuffix}"))}) 
+                ({string.Join(",", columns.Select(c => $"{SixnetSqliteManager.DefaultResolver.KeywordPrefix}{c}{SixnetSqliteManager.DefaultResolver.KeywordSuffix}"))}) 
                 VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
 
                 foreach (DataRow row in dataTable.Rows)
@@ -139,7 +139,7 @@ namespace Sixnet.Database.SQLite
             {
                 var dataTable = databaseBulkInsertCommand.DataTable;
                 SixnetDirectThrower.ThrowArgNullIf(dataTable == null, nameof(SixnetBulkInsertDatabaseCommand.DataTable));
-                var sqliteResolver = new SQLiteDataCommandResolver();
+                var sqliteResolver = new SixnetSqliteDataCommandResolver();
                 var conn = databaseBulkInsertCommand.Connection.DbConnection as SqliteConnection;
                 var bulkInsertOptions = databaseBulkInsertCommand.BulkInsertionOptions;
                 var columns = new List<string>(dataTable.Columns.Count);
@@ -155,7 +155,7 @@ namespace Sixnet.Database.SQLite
                 }
 
                 command.CommandText = $@"INSERT INTO {dataTable.TableName} 
-                ({string.Join(",", columns.Select(c => $"{SQLiteManager.DefaultResolver.KeywordPrefix}{c}{SQLiteManager.DefaultResolver.KeywordSuffix}"))}) 
+                ({string.Join(",", columns.Select(c => $"{SixnetSqliteManager.DefaultResolver.KeywordPrefix}{c}{SixnetSqliteManager.DefaultResolver.KeywordSuffix}"))}) 
                 VALUES ({string.Join(",", columns.Select(c => $"{sqliteResolver.FormatParameterName(c)}"))})";
 
                 foreach (DataRow row in dataTable.Rows)
