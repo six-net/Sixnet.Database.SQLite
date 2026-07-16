@@ -1,8 +1,10 @@
 ﻿using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
+
 using Sixnet.Development.Data;
 using Sixnet.Development.Data.Command;
+using Sixnet.Development.Data.Dapper;
 using Sixnet.Development.Data.Database;
 using Sixnet.Development.Data.Field;
 using Sixnet.Development.Entity;
@@ -358,6 +360,207 @@ namespace Sixnet.Database.SQLite
             #endregion
 
             return statements;
+        }
+
+        #endregion
+
+        #region Get create table statements
+
+        /// <summary>
+        /// Get create table statements
+        /// </summary>
+        /// <param name="migrationCommand">Migration command</param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetCreateTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetCreateTableStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Add foreign key
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetAddForeignKeyStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Delete foreign key
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteForeignKeyStatements(migrationCommand));
+        }
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteAllForeignKeyStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Add index
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddIndexStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetAddIndexStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Delete index
+
+        /// <summary>
+        /// Get delete index statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteIndexStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteIndexStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get add filed statements
+
+        /// <summary>
+        /// Get create field statement
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetAddFieldStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get delete filed statements
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteFieldStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get update field statements 
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetUpdateFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetUpdateFieldStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get rename table statements
+
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetRenameTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetRenameTableStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get delete all table statements
+
+        /// <summary>
+        /// Get delete all table statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override async Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            var statements = new List<SixnetExecutionDatabaseStatement>();
+            var sql = @"
+SELECT 'DROP TABLE IF EXISTS ""' || name || '"";'
+FROM sqlite_master
+WHERE type = 'table' AND name NOT LIKE 'sqlite_%';
+";
+            var deleteScripts = await migrationCommand.Connection.DbConnection.QueryAsync<string>(sql, transaction: migrationCommand.Connection.Transaction.DbTransaction).ConfigureAwait(false);
+            foreach (var script in deleteScripts)
+            {
+                statements.Add(new SixnetExecutionDatabaseStatement()
+                {
+                    Script = script
+                });
+            }
+
+            return statements;
+        }
+
+        #endregion
+
+        #region Get delete all view statements
+
+        /// <summary>
+        /// Get delete all view statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override async Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllViewStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            var statements = new List<SixnetExecutionDatabaseStatement>();
+            var sql = @"
+SELECT 'DROP VIEW IF EXISTS ""' || name || '"";'
+FROM sqlite_master
+WHERE type = 'view';
+";
+            var deleteScripts = await migrationCommand.Connection.DbConnection.QueryAsync<string>(sql, transaction: migrationCommand.Connection.Transaction.DbTransaction).ConfigureAwait(false);
+            foreach (var script in deleteScripts)
+            {
+                statements.Add(new SixnetExecutionDatabaseStatement()
+                {
+                    Script = script
+                });
+            }
+
+            return statements;
+        }
+
+        #endregion
+
+        #region Get delete all function statements
+
+        /// <summary>
+        /// Get delete all function statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllFunctionStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteAllFunctionStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get delete all custom type statements
+
+        /// <summary>
+        /// Get delete all custom type statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllCustomTypeStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteAllCustomTypeStatements(migrationCommand));
+        }
+
+        #endregion
+
+        #region Get delete all procedure statements
+
+        /// <summary>
+        /// Get delete all procedure statements
+        /// </summary>
+        /// <param name="migrationCommand"></param>
+        /// <returns></returns>
+        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllProcedureStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
+        {
+            return Task.FromResult(GetDeleteAllProcedureStatements(migrationCommand));
         }
 
         #endregion
