@@ -14,7 +14,7 @@
     <copyright>Copyright © DingBin.Li</copyright>
     <tags>.NET,Sixnet,SQLite</tags>
     <dependencies>
-       <dependency id="Microsoft.Data.Sqlite" version="10.0.9" />
+       <dependency id="Microsoft.Data.Sqlite" version="10.0.10" />
        <dependency id="Sixnet" version="3.0.0" />
     </dependencies>
   </metadata>

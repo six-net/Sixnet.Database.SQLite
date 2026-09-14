@@ -15,6 +15,8 @@ namespace Sixnet.Database.SQLite
 {
     internal partial class SixnetSqliteDataCommandResolver
     {
+        #region Data access
+
         #region Get query statement
 
         /// <summary>
@@ -29,7 +31,7 @@ namespace Sixnet.Database.SQLite
             var queryable = translationResult.GetOriginalQueryable();
             string sqlStatement;
             IEnumerable<ISixnetField> outputFields = null;
-            switch (queryable.ExecutionMode)
+            switch (queryable.Info.ExecutionMode)
             {
                 case SixnetQueryableExecutionMode.Script:
                     sqlStatement = translationResult.GetCondition();
@@ -42,7 +44,7 @@ namespace Sixnet.Database.SQLite
                     var sort = translationResult.GetSort();
                     var hasSort = !string.IsNullOrWhiteSpace(sort);
                     //limit
-                    var limit = GetLimitString(queryable.SkipCount, queryable.TakeCount, hasSort);
+                    var limit = GetLimitString(queryable.Info.SkipCount, queryable.Info.TakeCount, hasSort);
                     //combine
                     var combine = translationResult.GetCombine();
                     var hasCombine = !string.IsNullOrWhiteSpace(combine);
@@ -72,7 +74,7 @@ namespace Sixnet.Database.SQLite
                     }
 
                     // output fields
-                    if (outputFields.IsNullOrEmpty() || !queryable.SelectedFields.IsNullOrEmpty())
+                    if (outputFields.IsNullOrEmpty() || !queryable.Info.SelectedFields.IsNullOrEmpty())
                     {
                         outputFields = SixnetDataManager.GetQueryableFields(DatabaseType, queryable.GetModelType(), queryable, context.IsRootQueryable(queryable));
                     }
@@ -81,7 +83,7 @@ namespace Sixnet.Database.SQLite
                     var preScript = GetPreScript(context, location);
                     //statement
                     sqlStatement = $"SELECT{GetDistinctString(queryable)} {outputFieldString} FROM {targetScript}{sort}{limit}";
-                    switch (queryable.OutputType)
+                    switch (queryable.Info.OutputType)
                     {
                         case SixnetQueryableOutputType.Count:
                             sqlStatement = hasCombine
@@ -97,6 +99,14 @@ namespace Sixnet.Database.SQLite
                                     : $"{preScript}SELECT 1 WHERE EXISTS(({sqlStatement}){combine})"
                                 : $"{preScript}SELECT 1 WHERE EXISTS({sqlStatement})";
                             break;
+                        case SixnetQueryableOutputType.TempTable:
+                            sqlStatement = hasCombine
+                            ? hasSort
+                                ? $"(SELECT {tablePetName}.* FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName}){combine}"
+                                : $"({sqlStatement}){combine}"
+                            : $"{sqlStatement}";
+                            sqlStatement = $"{preScript}(CREATE TEMP TABLE {queryable.Info.TempTableName} AS SELECT * FROM ({sqlStatement}){TablePetNameKeyword}{tablePetName})";
+                            break;
                         default:
                             sqlStatement = hasCombine
                             ? hasSort
@@ -111,13 +121,7 @@ namespace Sixnet.Database.SQLite
             //parameters
             var parameters = context.GetParameters();
 
-            //log script
-            if (location == SixnetQueryableLocation.Top)
-            {
-                LogScript(sqlStatement, parameters);
-            }
-
-            return SixnetQueryDatabaseStatement.Create(sqlStatement, parameters, outputFields);
+            return SixnetQueryDatabaseStatement.Create(DatabaseType, location, sqlStatement, parameters, outputFields);
         }
 
         #endregion
@@ -193,13 +197,13 @@ namespace Sixnet.Database.SQLite
             }
             return new List<SixnetExecutionDatabaseStatement>(1)
             {
-                new SixnetExecutionDatabaseStatement()
+                SixnetExecutionDatabaseStatement.Create(DatabaseType, data => 
                 {
-                    Script = statementBuilder.ToString(),
-                    ScriptType = GetCommandType(command),
-                    Parameters = context.GetParameters(),
-                    MustAffectData = autoIncrementField != null || (command.Options?.MustAffectData ?? false),
-                }
+                    data.Script = statementBuilder.ToString();
+                    data.ScriptType = GetCommandType(command);
+                    data.Parameters = context.GetParameters();
+                    data.MustAffectData = autoIncrementField != null || (command.Options?.MustAffectData ?? false);
+                })
             };
         }
 
@@ -274,14 +278,14 @@ namespace Sixnet.Database.SQLite
             var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new SixnetExecutionDatabaseStatement()
+                statements.Add(SixnetExecutionDatabaseStatement.Create(DatabaseType, data => 
                 {
-                    Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName)),
-                    ScriptType = GetCommandType(command),
-                    Parameters = parameters,
-                    MustAffectData = true,
-                    HasPreScript = !preScripts.IsNullOrEmpty()
-                });
+                    data.Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName));
+                    data.ScriptType = GetCommandType(command);
+                    data.Parameters = parameters;
+                    data.MustAffectData = true;
+                    data.HasPreScript = !preScripts.IsNullOrEmpty();
+                }));
             }
 
             #endregion
@@ -347,14 +351,14 @@ namespace Sixnet.Database.SQLite
             var statements = new List<SixnetExecutionDatabaseStatement>();
             foreach (var tableName in tableNames)
             {
-                statements.Add(new SixnetExecutionDatabaseStatement()
+                statements.Add(SixnetExecutionDatabaseStatement.Create(DatabaseType, data => 
                 {
-                    Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName)),
-                    ScriptType = GetCommandType(command),
-                    MustAffectData = command.Options?.MustAffectData ?? false,
-                    Parameters = parameters,
-                    HasPreScript = !preScripts.IsNullOrEmpty()
-                });
+                    data.Script = string.Format(scriptTemplate, FormatAndWrapObjectName(tableName));
+                    data.ScriptType = GetCommandType(command);
+                    data.MustAffectData = command.Options?.MustAffectData ?? false;
+                    data.Parameters = parameters;
+                    data.HasPreScript = !preScripts.IsNullOrEmpty();
+                }));
             }
 
             #endregion
@@ -363,205 +367,6 @@ namespace Sixnet.Database.SQLite
         }
 
         #endregion
-
-        #region Get create table statements
-
-        /// <summary>
-        /// Get create table statements
-        /// </summary>
-        /// <param name="migrationCommand">Migration command</param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetCreateTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetCreateTableStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Add foreign key
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetAddForeignKeyStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Delete foreign key
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteForeignKeyStatements(migrationCommand));
-        }
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllForeignKeyStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteAllForeignKeyStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Add index
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddIndexStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetAddIndexStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Delete index
-
-        /// <summary>
-        /// Get delete index statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteIndexStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteIndexStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get add filed statements
-
-        /// <summary>
-        /// Get create field statement
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetAddFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetAddFieldStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get delete filed statements
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteFieldStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get update field statements 
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetUpdateFieldStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetUpdateFieldStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get rename table statements
-
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetRenameTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetRenameTableStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get delete all table statements
-
-        /// <summary>
-        /// Get delete all table statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override async Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllTableStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            var statements = new List<SixnetExecutionDatabaseStatement>();
-            var sql = @"
-SELECT 'DROP TABLE IF EXISTS ""' || name || '"";'
-FROM sqlite_master
-WHERE type = 'table' AND name NOT LIKE 'sqlite_%';
-";
-            var deleteScripts = await migrationCommand.Connection.DbConnection.QueryAsync<string>(sql, transaction: migrationCommand.Connection.Transaction.DbTransaction).ConfigureAwait(false);
-            foreach (var script in deleteScripts)
-            {
-                statements.Add(new SixnetExecutionDatabaseStatement()
-                {
-                    Script = script
-                });
-            }
-
-            return statements;
-        }
-
-        #endregion
-
-        #region Get delete all view statements
-
-        /// <summary>
-        /// Get delete all view statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override async Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllViewStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            var statements = new List<SixnetExecutionDatabaseStatement>();
-            var sql = @"
-SELECT 'DROP VIEW IF EXISTS ""' || name || '"";'
-FROM sqlite_master
-WHERE type = 'view';
-";
-            var deleteScripts = await migrationCommand.Connection.DbConnection.QueryAsync<string>(sql, transaction: migrationCommand.Connection.Transaction.DbTransaction).ConfigureAwait(false);
-            foreach (var script in deleteScripts)
-            {
-                statements.Add(new SixnetExecutionDatabaseStatement()
-                {
-                    Script = script
-                });
-            }
-
-            return statements;
-        }
-
-        #endregion
-
-        #region Get delete all function statements
-
-        /// <summary>
-        /// Get delete all function statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllFunctionStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteAllFunctionStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get delete all custom type statements
-
-        /// <summary>
-        /// Get delete all custom type statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllCustomTypeStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteAllCustomTypeStatements(migrationCommand));
-        }
-
-        #endregion
-
-        #region Get delete all procedure statements
-
-        /// <summary>
-        /// Get delete all procedure statements
-        /// </summary>
-        /// <param name="migrationCommand"></param>
-        /// <returns></returns>
-        protected override Task<List<SixnetExecutionDatabaseStatement>> GetDeleteAllProcedureStatementsAsync(SixnetMigrationDatabaseCommand migrationCommand)
-        {
-            return Task.FromResult(GetDeleteAllProcedureStatements(migrationCommand));
-        }
 
         #endregion
     }

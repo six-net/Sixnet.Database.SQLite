@@ -62,7 +62,7 @@ namespace Sixnet.Database.SQLite
         /// Get data command resolver
         /// </summary>
         /// <returns></returns>
-        protected override ISixnetDataCommandResolver GetDataCommandResolver()
+        protected override ISixnetDataCommandResolver GetDataCommandResolver(SixnetDatabaseCommand command)
         {
             return SixnetSqliteManager.GetCommandResolver();
         }
@@ -76,7 +76,7 @@ namespace Sixnet.Database.SQLite
         /// </summary>
         /// <param name="parameters">Data command parameters</param>
         /// <returns></returns>
-        protected override DynamicParameters ConvertDataCommandParameters(SixnetDataCommandParameters parameters)
+        protected override DynamicParameters ConvertDataCommandParameters(SixnetDatabaseCommand command, SixnetDataCommandParameters parameters)
         {
             return parameters?.ConvertToDynamicParameters(SixnetSqliteManager.GetCommandResolver().DatabaseType);
         }
