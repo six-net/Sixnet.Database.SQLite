@@ -491,7 +491,7 @@ WHERE type = 'table' AND name NOT LIKE 'sqlite_%';
                 var hasColumn = command.Connection.DbConnection.ExecuteScalar<int>(existScript, transaction: command.Connection.Transaction.DbTransaction) > 0;
                 if (!hasColumn)
                 {
-                    scripts.Add($"ALTER TABLE {formattedTableName} ADD COLUMN {WrapObjectName(dataFieldName).Name}{GetFieldDefinition(field, command.MigrationInfo)};");
+                    scripts.Add($"ALTER TABLE {formattedTableName} ADD COLUMN {WrapObjectName(dataFieldName).Name}{GetFieldDefinition(table, field, command.MigrationInfo)};");
                 }
             }
             return new SixnetDatabaseScriptInfo()
