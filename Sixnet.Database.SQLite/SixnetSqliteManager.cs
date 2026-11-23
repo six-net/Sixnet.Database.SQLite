@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Data;
+using System.IO;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Sixnet.Development.Data;
@@ -31,6 +32,12 @@ namespace Sixnet.Database.SQLite
         /// <returns>Return database connection</returns>
         public static IDbConnection GetConnection(SixnetDatabaseServer server)
         {
+            var connectionStringBuilder = new SqliteConnectionStringBuilder(server.ConnectionString);
+            var dbDirectory = Path.GetDirectoryName(connectionStringBuilder.DataSource);
+            if (!string.IsNullOrWhiteSpace(dbDirectory) && !Directory.Exists(dbDirectory))
+            {
+                Directory.CreateDirectory(dbDirectory);
+            }
             var conn = SixnetDataManager.GetDatabaseConnection(server) ?? RegisterCustomFunctions(new SqliteConnection(SixnetDataManager.ResolveConnectionString(server)));
             return conn;
         }
